@@ -7,7 +7,6 @@ on:
 
 jobs:
   build:
-    name: Build Android APK
     runs-on: ubuntu-latest
 
     steps:
@@ -25,21 +24,17 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
-      - name: Prebuild Android project
+      - name: Prebuild Android
         run: npx expo prebuild --platform android --no-install
 
-      - name: Make gradlew executable
-        run: chmod +x android/gradlew
-
       - name: Build APK
-        working-directory: android
-        run: ./gradlew assembleDebug --no-daemon
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
