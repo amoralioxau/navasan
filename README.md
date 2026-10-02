@@ -1,2 +1,3 @@
-# navasan
-NAVASAN Trading Journal
+# NAVASAN
+
+Trading Journal & Analysis
