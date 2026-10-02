@@ -5,9 +5,6 @@ on:
   push:
     branches: [main]
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   build:
     name: Build Android APK
@@ -20,7 +17,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -28,38 +25,25 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Install Android SDK components
-        run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" || true
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
-      - name: Install EAS CLI
-        run: npm install -g eas-cli
+      - name: Prebuild Android project
+        run: npx expo prebuild --platform android --no-install
 
-      - name: Verify versions
-        run: |
-          node --version
-          java -version
-          eas --version
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
 
       - name: Build APK
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          eas build --local \
-            --platform android \
-            --profile preview \
-            --non-interactive \
-            --output ./navasan.apk
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: navasan-apk
-          path: ./navasan.apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
