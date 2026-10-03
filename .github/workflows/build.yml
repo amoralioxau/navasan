@@ -40,42 +40,45 @@ jobs:
       - name: Configure Signing
         run: |
           cd android/app
-          python3 << 'EOF'
-          import re
+          python3 << 'PYEOF'
           with open('build.gradle', 'r') as f:
               content = f.read()
 
-          signing_block = '''
-              signingConfigs {
+          # 1. Add release signing config INSIDE existing signingConfigs block
+          signing_release = '''
                   release {
-                      storeFile file('navasan.keystore')
-                      storePassword 'Navasan2026'
-                      keyAlias 'navasan'
-                      keyPassword 'Navasan2026'
-                  }
-              }
-          '''
+                      storeFile file("navasan.keystore")
+                      storePassword "Navasan2026"
+                      keyAlias "navasan"
+                      keyPassword "Navasan2026"
+                  }'''
 
-          if 'signingConfigs {' not in content:
-              content = re.sub(
-                  r'(android\s*\{)',
-                  r'\1' + signing_block,
-                  content,
-                  count=1
-              )
+          content = content.replace(
+              'signingConfigs {',
+              'signingConfigs {' + signing_release,
+              1
+          )
 
-          if 'signingConfig signingConfigs.release' not in content:
-              content = re.sub(
-                  r'(release\s*\{[^}]*?)(^\s*\})',
-                  r'\1    signingConfig signingConfigs.release\n\2',
-                  content,
-                  count=1,
-                  flags=re.MULTILINE
-              )
+          # 2. Change all signingConfigs.debug references to signingConfigs.release
+          content = content.replace(
+              'signingConfig signingConfigs.debug',
+              'signingConfig signingConfigs.release'
+          )
 
           with open('build.gradle', 'w') as f:
               f.write(content)
-          EOF
+
+          print("=== Signing config patched successfully ===")
+          PYEOF
+
+      - name: Verify Signing Config
+        run: |
+          cd android/app
+          echo "=== signingConfigs section: ==="
+          grep -A 20 "signingConfigs {" build.gradle | head -25
+          echo ""
+          echo "=== buildTypes section: ==="
+          grep -A 5 "signingConfig signingConfigs" build.gradle
 
       - name: Bundle JS
         run: |
