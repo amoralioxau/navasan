@@ -33,6 +33,50 @@ jobs:
       - name: Set up local.properties
         run: echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 
+      - name: Decode Keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/navasan.keystore
+
+      - name: Configure Signing
+        run: |
+          cd android/app
+          python3 << 'EOF'
+          import re
+          with open('build.gradle', 'r') as f:
+              content = f.read()
+
+          signing_block = '''
+              signingConfigs {
+                  release {
+                      storeFile file('navasan.keystore')
+                      storePassword 'Navasan2026'
+                      keyAlias 'navasan'
+                      keyPassword 'Navasan2026'
+                  }
+              }
+          '''
+
+          if 'signingConfigs {' not in content:
+              content = re.sub(
+                  r'(android\s*\{)',
+                  r'\1' + signing_block,
+                  content,
+                  count=1
+              )
+
+          if 'signingConfig signingConfigs.release' not in content:
+              content = re.sub(
+                  r'(release\s*\{[^}]*?)(^\s*\})',
+                  r'\1    signingConfig signingConfigs.release\n\2',
+                  content,
+                  count=1,
+                  flags=re.MULTILINE
+              )
+
+          with open('build.gradle', 'w') as f:
+              f.write(content)
+          EOF
+
       - name: Bundle JS
         run: |
           mkdir -p android/app/src/main/assets
@@ -43,15 +87,15 @@ jobs:
             --bundle-output android/app/src/main/assets/index.android.bundle \
             --assets-dest android/app/src/main/res
 
-      - name: Build APK
+      - name: Build Release APK
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleRelease --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: navasan-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: navasan-release-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
           retention-days: 30
