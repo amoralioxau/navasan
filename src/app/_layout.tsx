@@ -1,6 +1,6 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 import AppTabs from '@/components/app-tabs';
 import {
@@ -8,16 +8,11 @@ import {
   useNavasanTheme,
 } from '@/context/theme-context';
 
-// جلوگیری از مخفی شدن خودکار Splash
-SplashScreen.preventAutoHideAsync();
+// از همون ابتدا Splash رو مخفی کن (بدون انتظار)
+SplashScreen.hideAsync().catch(() => {});
 
 function NavasanNavigation() {
   const { isDark } = useNavasanTheme();
-
-  useEffect(() => {
-    // وقتی اپ لود شد، Splash رو مخفی کن
-    SplashScreen.hideAsync().catch(() => {});
-  }, []);
 
   return (
     <ThemeProvider value={isDark ? DarkTheme : DefaultTheme}>
@@ -27,6 +22,14 @@ function NavasanNavigation() {
 }
 
 export default function TabLayout() {
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    // یه بار دیگه بعد از mount شدن هم مطمئن شو
+    SplashScreen.hideAsync().catch(() => {});
+    setReady(true);
+  }, []);
+
   return (
     <NavasanThemeProvider>
       <NavasanNavigation />
