@@ -37,14 +37,14 @@ jobs:
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/navasan.keystore
 
-      - name: Configure Signing
+      - name: Configure Signing and Optimization
         run: |
           cd android/app
           python3 << 'PYEOF'
           with open('build.gradle', 'r') as f:
               content = f.read()
 
-          # 1. Add release signing config INSIDE existing signingConfigs block
+          # 1. Add release signing config
           signing_release = '''
                   release {
                       storeFile file("navasan.keystore")
@@ -59,26 +59,57 @@ jobs:
               1
           )
 
-          # 2. Change all signingConfigs.debug references to signingConfigs.release
+          # 2. Use release signing
           content = content.replace(
               'signingConfig signingConfigs.debug',
               'signingConfig signingConfigs.release'
           )
 
+          # 3. Enable ProGuard
+          content = content.replace(
+              'def enableProguardInReleaseBuilds = false',
+              'def enableProguardInReleaseBuilds = true'
+          )
+
+          # 4. Enable resource shrink
+          content = content.replace(
+              'def enableShrinkResourcesInReleaseBuilds = false',
+              'def enableShrinkResourcesInReleaseBuilds = true'
+          )
+
+          # 5. Filter CPU architectures
+          if 'abiFilters' not in content:
+              abi_config = '''
+              splits {
+                  abi {
+                      reset()
+                      enable true
+                      universalApk false
+                      include "arm64-v8a", "armeabi-v7a"
+                  }
+              }
+              '''
+              content = content.replace(
+                  'buildTypes {',
+                  abi_config + '\n    buildTypes {',
+                  1
+              )
+
           with open('build.gradle', 'w') as f:
               f.write(content)
 
-          print("=== Signing config patched successfully ===")
+          print("=== Build.gradle patched ===")
           PYEOF
 
-      - name: Verify Signing Config
+      - name: Verify Changes
         run: |
           cd android/app
-          echo "=== signingConfigs section: ==="
-          grep -A 20 "signingConfigs {" build.gradle | head -25
-          echo ""
-          echo "=== buildTypes section: ==="
-          grep -A 5 "signingConfig signingConfigs" build.gradle
+          echo "=== ProGuard: ==="
+          grep "enableProguardInReleaseBuilds" build.gradle || echo "not found"
+          echo "=== Resource shrink: ==="
+          grep "enableShrinkResourcesInReleaseBuilds" build.gradle || echo "not found"
+          echo "=== Signing: ==="
+          grep "signingConfig signingConfigs" build.gradle
 
       - name: Bundle JS
         run: |
@@ -96,9 +127,14 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
 
-      - name: Upload APK
+      - name: Show APK sizes
+        run: |
+          echo "=== APK sizes ==="
+          find android/app/build/outputs/apk -name "*.apk" -exec ls -lh {} \;
+
+      - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: navasan-release-apk
-          path: android/app/build/outputs/apk/release/app-release.apk
+          name: navasan-release-apks
+          path: android/app/build/outputs/apk/release/*.apk
           retention-days: 30
