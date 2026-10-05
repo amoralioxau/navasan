@@ -2,17 +2,8 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Linking from 'expo-linking';
 import { useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
-
-import { ExportPreviewCard } from '@/components/ExportPreviewCard';
-import { useNavasanTheme } from '@/context/theme-context';
+import { useEffect, useState } from 'react';
 import {
-  exportTradesToCSV,
-  exportTradesToExcel,
-  exportViewToPNG,
-} from '@/lib/export';
-import {
-  ActivityIndicator,
   Alert,
   Modal,
   Platform,
@@ -22,8 +13,18 @@ import {
   Switch,
   Text,
   TouchableOpacity,
-  View,
+  View
 } from 'react-native';
+
+import { useNavasanTheme } from '@/context/theme-context';
+import {
+  applyNotificationPreferences,
+  DEFAULT_NOTIF_PREFS,
+  loadNotificationPreferences,
+  NotificationPreferences,
+  requestNotificationPermissions,
+  saveNotificationPreferences,
+} from '@/lib/notifications';
 
 const BLUE = '#2563EB';
 
@@ -140,16 +141,21 @@ export default function MoreScreen() {
   const [initialBalance, setInitialBalance] = useState<number | null>(null);
   const [exporting, setExporting] = useState(false);
 
-  const exportCardRef = useRef<View>(null);
-
   const [journalCount, setJournalCount] =
     useState(0);
+
+  // ✅ Notification Preferences
+  const [notifPrefs, setNotifPrefs] = useState<NotificationPreferences>(
+    DEFAULT_NOTIF_PREFS
+  );
+  const [notifModalVisible, setNotifModalVisible] = useState(false);
 
   const { isDark, setDarkMode } = useNavasanTheme();
 
   useEffect(() => {
     loadSettings();
     loadJournalCount();
+    loadNotifPrefs();
   }, []);
 
   const loadSettings = async () => {
@@ -188,6 +194,20 @@ export default function MoreScreen() {
         error
       );
     }
+  };
+
+  const loadNotifPrefs = async () => {
+    const prefs = await loadNotificationPreferences();
+    setNotifPrefs(prefs);
+  };
+
+  const updateNotifPref = async (
+    changes: Partial<NotificationPreferences>
+  ) => {
+    const nextPrefs = { ...notifPrefs, ...changes };
+    setNotifPrefs(nextPrefs);
+    await saveNotificationPreferences(nextPrefs);
+    await applyNotificationPreferences(nextPrefs);
   };
 
   const loadJournalCount = async () => {
@@ -282,9 +302,7 @@ export default function MoreScreen() {
         break;
 
       case 'notifications':
-        updateSettings({
-          notifications: !settings.notifications,
-        });
+        setNotifModalVisible(true);
         break;
 
       case 'contact':
@@ -320,7 +338,7 @@ export default function MoreScreen() {
     const total = trades.reduce((s, t) => s + Number(t.result || 0), 0);
     const grossWin = wins.reduce((s, t) => s + Number(t.result || 0), 0);
     const grossLoss = Math.abs(
-      losses.reduce((s, t) => s + Number(t.result || 0), 0),
+      losses.reduce((s, t) => s + Number(t.result || 0), 0)
     );
     const winRate = trades.length > 0 ? (wins.length / trades.length) * 100 : 0;
     const avgWin = wins.length > 0 ? grossWin / wins.length : 0;
@@ -355,49 +373,6 @@ export default function MoreScreen() {
     };
   };
 
-  const handleExportCSV = async () => {
-    if (trades.length === 0) {
-      Alert.alert('خطا', 'هیچ معامله‌ای برای خروجی گرفتن وجود ندارد.');
-      return;
-    }
-
-    setExporting(true);
-    try {
-      await exportTradesToCSV(trades);
-    } finally {
-      setExporting(false);
-    }
-  };
-
-  const handleExportExcel = async () => {
-    if (trades.length === 0) {
-      Alert.alert('خطا', 'هیچ معامله‌ای برای خروجی گرفتن وجود ندارد.');
-      return;
-    }
-
-    setExporting(true);
-    try {
-      await exportTradesToExcel(trades, computeStats());
-    } finally {
-      setExporting(false);
-    }
-  };
-
-  const handleExportPNG = async () => {
-    if (trades.length === 0) {
-      Alert.alert('خطا', 'هیچ معامله‌ای برای خروجی گرفتن وجود ندارد.');
-      return;
-    }
-
-    setExporting(true);
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      await exportViewToPNG(exportCardRef);
-    } finally {
-      setExporting(false);
-    }
-  };
-
   // =========================================================
   // CONTACT
   // =========================================================
@@ -417,7 +392,7 @@ export default function MoreScreen() {
     } catch {
       Alert.alert(
         'تلگرام',
-        `آیدی پشتیبانی NAVASAN:\n${TELEGRAM_USERNAME}`,
+        `آیدی پشتیبانی NAVASAN:\n${TELEGRAM_USERNAME}`
       );
     }
   };
@@ -437,7 +412,7 @@ export default function MoreScreen() {
     } catch {
       Alert.alert(
         'روبیکا',
-        `آیدی پشتیبانی NAVASAN:\n${RUBIKA_USERNAME}`,
+        `آیدی پشتیبانی NAVASAN:\n${RUBIKA_USERNAME}`
       );
     }
   };
@@ -482,12 +457,12 @@ export default function MoreScreen() {
 
         Alert.alert(
           'انجام شد',
-          'اطلاعات ژورنال این دستگاه پاک شد.',
+          'اطلاعات ژورنال این دستگاه پاک شد.'
         );
       } catch {
         Alert.alert(
           'خطا',
-          'پاک کردن اطلاعات ژورنال انجام نشد.',
+          'پاک کردن اطلاعات ژورنال انجام نشد.'
         );
       }
     };
@@ -503,7 +478,7 @@ export default function MoreScreen() {
             style: 'destructive',
             onPress: deleteData,
           },
-        ],
+        ]
       );
     } else {
       deleteData();
@@ -525,11 +500,11 @@ export default function MoreScreen() {
 
             Alert.alert(
               'انجام شد',
-              'تنظیمات به حالت پیش‌فرض بازگردانده شدند.',
+              'تنظیمات به حالت پیش‌فرض بازگردانده شدند.'
             );
           },
         },
-      ],
+      ]
     );
   };
 
@@ -540,8 +515,7 @@ export default function MoreScreen() {
   const secondaryText = isDark ? '#A1A1AA' : '#64748B';
   const iconBackground = isDark ? '#172554' : '#EFF6FF';
   const dividerColor = isDark ? '#24262A' : '#F1F5F9';
-
-  const exportStats = computeStats();
+  const inputBg = isDark ? '#212225' : '#F0F0F3';
 
   return (
     <View style={[styles.container, { backgroundColor }]}>
@@ -655,7 +629,12 @@ export default function MoreScreen() {
             ]}
           />
 
-          <View style={styles.quickRow}>
+          {/* ✅ Notification Row → opens modal */}
+          <TouchableOpacity
+            style={styles.quickRow}
+            onPress={() => setNotifModalVisible(true)}
+            activeOpacity={0.7}
+          >
             <View
               style={[
                 styles.quickIcon,
@@ -664,7 +643,7 @@ export default function MoreScreen() {
             >
               <Ionicons
                 name={
-                  settings.notifications
+                  notifPrefs.enabled
                     ? 'notifications-outline'
                     : 'notifications-off-outline'
                 }
@@ -679,21 +658,18 @@ export default function MoreScreen() {
               </Text>
 
               <Text style={[styles.quickSubtitle, { color: secondaryText }]}>
-                {settings.notifications
-                  ? 'اعلان‌ها فعال هستند'
+                {notifPrefs.enabled
+                  ? 'مدیریت اعلان‌ها و زمان‌بندی'
                   : 'اعلان‌ها غیرفعال هستند'}
               </Text>
             </View>
 
-            <Switch
-              value={settings.notifications}
-              onValueChange={(value) =>
-                updateSettings({ notifications: value })
-              }
-              trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
-              thumbColor={settings.notifications ? BLUE : '#FFFFFF'}
+            <Ionicons
+              name="chevron-back"
+              size={20}
+              color={secondaryText}
             />
-          </View>
+          </TouchableOpacity>
         </View>
 
         {/* Menu */}
@@ -775,6 +751,471 @@ export default function MoreScreen() {
       </ScrollView>
 
       {/* ================================================ */}
+      {/* NOTIFICATION SETTINGS MODAL */}
+      {/* ================================================ */}
+
+      <Modal
+        visible={notifModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setNotifModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View
+            style={[
+              styles.settingsModal,
+              { backgroundColor: cardColor },
+            ]}
+          >
+            <View style={styles.modalHeader}>
+              <TouchableOpacity
+                onPress={() => setNotifModalVisible(false)}
+                style={styles.closeButton}
+              >
+                <Ionicons name="close" size={23} color={primaryText} />
+              </TouchableOpacity>
+
+              <Text style={[styles.modalTitle, { color: primaryText }]}>
+                تنظیمات اعلان‌ها
+              </Text>
+
+              <View style={styles.headerPlaceholder} />
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {/* MASTER TOGGLE */}
+              <View
+                style={[
+                  styles.settingRow,
+                  { borderColor, backgroundColor: cardColor },
+                ]}
+              >
+                <View
+                  style={[
+                    styles.settingIcon,
+                    { backgroundColor: iconBackground },
+                  ]}
+                >
+                  <Ionicons
+                    name={
+                      notifPrefs.enabled
+                        ? 'notifications'
+                        : 'notifications-off'
+                    }
+                    size={22}
+                    color={BLUE}
+                  />
+                </View>
+
+                <View style={styles.settingText}>
+                  <Text
+                    style={[styles.settingTitle, { color: primaryText }]}
+                  >
+                    اعلان‌ها
+                  </Text>
+                  <Text
+                    style={[styles.settingSubtitle, { color: secondaryText }]}
+                  >
+                    {notifPrefs.enabled ? 'فعال' : 'غیرفعال'}
+                  </Text>
+                </View>
+
+                <Switch
+                  value={notifPrefs.enabled}
+                  onValueChange={async (value) => {
+                    if (value) {
+                      const granted =
+                        await requestNotificationPermissions();
+                      if (!granted) {
+                        Alert.alert(
+                          'دسترسی لازم است',
+                          'برای فعال‌سازی اعلان‌ها، از تنظیمات گوشی اجازه بده.'
+                        );
+                        return;
+                      }
+                    }
+                    updateNotifPref({ enabled: value });
+                  }}
+                  trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                  thumbColor={notifPrefs.enabled ? BLUE : '#FFFFFF'}
+                />
+              </View>
+
+              {notifPrefs.enabled && (
+                <>
+                  {/* TILT WARNING */}
+                  <View
+                    style={[
+                      styles.settingRow,
+                      { borderColor, backgroundColor: cardColor },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.settingIcon,
+                        { backgroundColor: iconBackground },
+                      ]}
+                    >
+                      <Ionicons name="warning" size={22} color="#DC2626" />
+                    </View>
+
+                    <View style={styles.settingText}>
+                      <Text
+                        style={[styles.settingTitle, { color: primaryText }]}
+                      >
+                        هشدار Tilt
+                      </Text>
+                      <Text
+                        style={[
+                          styles.settingSubtitle,
+                          { color: secondaryText },
+                        ]}
+                      >
+                        وقتی ۳ باخت پشت سر هم داری
+                      </Text>
+                    </View>
+
+                    <Switch
+                      value={notifPrefs.tiltWarning}
+                      onValueChange={(value) =>
+                        updateNotifPref({ tiltWarning: value })
+                      }
+                      trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                      thumbColor={notifPrefs.tiltWarning ? BLUE : '#FFFFFF'}
+                    />
+                  </View>
+
+                  {/* OVERTRADING */}
+                  <View
+                    style={[
+                      styles.settingRow,
+                      { borderColor, backgroundColor: cardColor },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.settingIcon,
+                        { backgroundColor: iconBackground },
+                      ]}
+                    >
+                      <Ionicons name="flame" size={22} color="#D97706" />
+                    </View>
+
+                    <View style={styles.settingText}>
+                      <Text
+                        style={[styles.settingTitle, { color: primaryText }]}
+                      >
+                        هشدار Overtrading
+                      </Text>
+                      <Text
+                        style={[
+                          styles.settingSubtitle,
+                          { color: secondaryText },
+                        ]}
+                      >
+                        وقتی ۵+ معامله در یک روز داری
+                      </Text>
+                    </View>
+
+                    <Switch
+                      value={notifPrefs.overtradingWarning}
+                      onValueChange={(value) =>
+                        updateNotifPref({ overtradingWarning: value })
+                      }
+                      trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                      thumbColor={
+                        notifPrefs.overtradingWarning ? BLUE : '#FFFFFF'
+                      }
+                    />
+                  </View>
+
+                  {/* DAILY REMINDER */}
+                  <View
+                    style={[
+                      styles.settingRow,
+                      { borderColor, backgroundColor: cardColor },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.settingIcon,
+                        { backgroundColor: iconBackground },
+                      ]}
+                    >
+                      <Ionicons name="time" size={22} color={BLUE} />
+                    </View>
+
+                    <View style={styles.settingText}>
+                      <Text
+                        style={[styles.settingTitle, { color: primaryText }]}
+                      >
+                        یادآوری روزانه
+                      </Text>
+                      <Text
+                        style={[
+                          styles.settingSubtitle,
+                          { color: secondaryText },
+                        ]}
+                      >
+                        ساعت{' '}
+                        {String(notifPrefs.dailyReminderHour).padStart(
+                          2,
+                          '0'
+                        )}
+                        :
+                        {String(notifPrefs.dailyReminderMinute).padStart(
+                          2,
+                          '0'
+                        )}
+                      </Text>
+                    </View>
+
+                    <Switch
+                      value={notifPrefs.dailyReminder}
+                      onValueChange={(value) =>
+                        updateNotifPref({ dailyReminder: value })
+                      }
+                      trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                      thumbColor={
+                        notifPrefs.dailyReminder ? BLUE : '#FFFFFF'
+                      }
+                    />
+                  </View>
+
+                  {/* TIME PICKER */}
+                  {notifPrefs.dailyReminder && (
+                    <View
+                      style={[
+                        styles.settingRow,
+                        { borderColor, backgroundColor: cardColor },
+                      ]}
+                    >
+                      <View
+                        style={[
+                          styles.settingIcon,
+                          { backgroundColor: iconBackground },
+                        ]}
+                      >
+                        <Ionicons
+                          name="hourglass"
+                          size={22}
+                          color="#7C3AED"
+                        />
+                      </View>
+
+                      <View style={styles.settingText}>
+                        <Text
+                          style={[
+                            styles.settingTitle,
+                            { color: primaryText },
+                          ]}
+                        >
+                          ساعت یادآوری
+                        </Text>
+                        <Text
+                          style={[
+                            styles.settingSubtitle,
+                            { color: secondaryText },
+                          ]}
+                        >
+                          هر شب در این ساعت
+                        </Text>
+                      </View>
+
+                      <View style={{ flexDirection: 'row', gap: 6 }}>
+                        {[18, 20, 21, 22, 23].map((h) => (
+                          <TouchableOpacity
+                            key={h}
+                            onPress={() =>
+                              updateNotifPref({ dailyReminderHour: h })
+                            }
+                            style={{
+                              paddingHorizontal: 10,
+                              paddingVertical: 8,
+                              borderRadius: 8,
+                              backgroundColor:
+                                notifPrefs.dailyReminderHour === h
+                                  ? BLUE
+                                  : inputBg,
+                            }}
+                          >
+                            <Text
+                              style={{
+                                color:
+                                  notifPrefs.dailyReminderHour === h
+                                    ? '#FFF'
+                                    : primaryText,
+                                fontSize: 13,
+                                fontWeight: '800',
+                              }}
+                            >
+                              {h}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </View>
+                  )}
+
+                  {/* WEEKLY REPORT */}
+                  <View
+                    style={[
+                      styles.settingRow,
+                      { borderColor, backgroundColor: cardColor },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.settingIcon,
+                        { backgroundColor: iconBackground },
+                      ]}
+                    >
+                      <Ionicons
+                        name="stats-chart"
+                        size={22}
+                        color="#16A34A"
+                      />
+                    </View>
+
+                    <View style={styles.settingText}>
+                      <Text
+                        style={[styles.settingTitle, { color: primaryText }]}
+                      >
+                        گزارش هفتگی
+                      </Text>
+                      <Text
+                        style={[
+                          styles.settingSubtitle,
+                          { color: secondaryText },
+                        ]}
+                      >
+                        هر یکشنبه ساعت ۱۰ صبح
+                      </Text>
+                    </View>
+
+                    <Switch
+                      value={notifPrefs.weeklyReport}
+                      onValueChange={(value) =>
+                        updateNotifPref({ weeklyReport: value })
+                      }
+                      trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                      thumbColor={
+                        notifPrefs.weeklyReport ? BLUE : '#FFFFFF'
+                      }
+                    />
+                  </View>
+
+                  {/* NEW ANALYSIS */}
+                  <View
+                    style={[
+                      styles.settingRow,
+                      { borderColor, backgroundColor: cardColor },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.settingIcon,
+                        { backgroundColor: iconBackground },
+                      ]}
+                    >
+                      <Ionicons
+                        name="analytics"
+                        size={22}
+                        color="#0891B2"
+                      />
+                    </View>
+
+                    <View style={styles.settingText}>
+                      <Text
+                        style={[styles.settingTitle, { color: primaryText }]}
+                      >
+                        تحلیل‌های جدید
+                      </Text>
+                      <Text
+                        style={[
+                          styles.settingSubtitle,
+                          { color: secondaryText },
+                        ]}
+                      >
+                        از تحلیل‌گران دنبال‌شده
+                      </Text>
+                    </View>
+
+                    <Switch
+                      value={notifPrefs.newAnalysis}
+                      onValueChange={(value) =>
+                        updateNotifPref({ newAnalysis: value })
+                      }
+                      trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                      thumbColor={
+                        notifPrefs.newAnalysis ? BLUE : '#FFFFFF'
+                      }
+                    />
+                  </View>
+
+                  {/* TRADE LOGGED */}
+                  <View
+                    style={[
+                      styles.settingRow,
+                      { borderColor, backgroundColor: cardColor },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.settingIcon,
+                        { backgroundColor: iconBackground },
+                      ]}
+                    >
+                      <Ionicons
+                        name="checkmark-circle"
+                        size={22}
+                        color="#16A34A"
+                      />
+                    </View>
+
+                    <View style={styles.settingText}>
+                      <Text
+                        style={[styles.settingTitle, { color: primaryText }]}
+                      >
+                        تأیید ثبت معامله
+                      </Text>
+                      <Text
+                        style={[
+                          styles.settingSubtitle,
+                          { color: secondaryText },
+                        ]}
+                      >
+                        هر بار معامله ثبت می‌کنی
+                      </Text>
+                    </View>
+
+                    <Switch
+                      value={notifPrefs.tradeLogged}
+                      onValueChange={(value) =>
+                        updateNotifPref({ tradeLogged: value })
+                      }
+                      trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                      thumbColor={
+                        notifPrefs.tradeLogged ? BLUE : '#FFFFFF'
+                      }
+                    />
+                  </View>
+                </>
+              )}
+
+              <TouchableOpacity
+                activeOpacity={0.85}
+                style={styles.doneButton}
+                onPress={() => setNotifModalVisible(false)}
+              >
+                <Text style={styles.doneButtonText}>ذخیره و بستن</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ================================================ */}
       {/* Settings Modal */}
       {/* ================================================ */}
 
@@ -829,10 +1270,11 @@ export default function MoreScreen() {
                 </View>
 
                 <View style={styles.settingText}>
-                  <Text style={[styles.settingTitle, { color: primaryText }]}>
+                  <Text
+                    style={[styles.settingTitle, { color: primaryText }]}
+                  >
                     حالت تیره
                   </Text>
-
                   <Text
                     style={[styles.settingSubtitle, { color: secondaryText }]}
                   >
@@ -857,7 +1299,14 @@ export default function MoreScreen() {
                 اعلان‌ها
               </Text>
 
-              <View style={[styles.settingRow, { borderColor }]}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                style={[styles.actionSettingRow, { borderColor }]}
+                onPress={() => {
+                  setSettingsVisible(false);
+                  setNotifModalVisible(true);
+                }}
+              >
                 <View
                   style={[
                     styles.settingIcon,
@@ -865,37 +1314,33 @@ export default function MoreScreen() {
                   ]}
                 >
                   <Ionicons
-                    name={
-                      settings.notifications
-                        ? 'notifications-outline'
-                        : 'notifications-off-outline'
-                    }
+                    name="notifications-outline"
                     size={22}
                     color={BLUE}
                   />
                 </View>
 
                 <View style={styles.settingText}>
-                  <Text style={[styles.settingTitle, { color: primaryText }]}>
-                    اعلان‌های NAVASAN
+                  <Text
+                    style={[styles.settingTitle, { color: primaryText }]}
+                  >
+                    تنظیمات اعلان‌ها
                   </Text>
-
                   <Text
                     style={[styles.settingSubtitle, { color: secondaryText }]}
                   >
-                    فعال یا غیرفعال کردن اعلان‌ها
+                    {notifPrefs.enabled
+                      ? 'اعلان‌ها فعال هستند'
+                      : 'اعلان‌ها غیرفعال هستند'}
                   </Text>
                 </View>
 
-                <Switch
-                  value={settings.notifications}
-                  onValueChange={(value) =>
-                    updateSettings({ notifications: value })
-                  }
-                  trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
-                  thumbColor={settings.notifications ? BLUE : '#FFFFFF'}
+                <Ionicons
+                  name="chevron-back"
+                  size={20}
+                  color={secondaryText}
                 />
-              </View>
+              </TouchableOpacity>
 
               {/* PRIVACY */}
               <Text
@@ -919,10 +1364,11 @@ export default function MoreScreen() {
                 </View>
 
                 <View style={styles.settingText}>
-                  <Text style={[styles.settingTitle, { color: primaryText }]}>
+                  <Text
+                    style={[styles.settingTitle, { color: primaryText }]}
+                  >
                     تأیید قبل از حذف
                   </Text>
-
                   <Text
                     style={[styles.settingSubtitle, { color: secondaryText }]}
                   >
@@ -937,200 +1383,6 @@ export default function MoreScreen() {
                   }
                   trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
                   thumbColor={settings.confirmDelete ? BLUE : '#FFFFFF'}
-                />
-              </View>
-
-              {/* ========================================== */}
-              {/* EXPORT SECTION */}
-              {/* ========================================== */}
-
-              <Text
-                style={[styles.modalSectionTitle, { color: secondaryText }]}
-              >
-                خروجی گرفتن
-              </Text>
-
-              {/* CSV */}
-              <TouchableOpacity
-                activeOpacity={0.8}
-                style={[styles.actionSettingRow, { borderColor }]}
-                onPress={handleExportCSV}
-                disabled={exporting || trades.length === 0}
-              >
-                <View
-                  style={[
-                    styles.settingIcon,
-                    {
-                      backgroundColor: isDark ? '#052E16' : '#F0FDF4',
-                    },
-                  ]}
-                >
-                  {exporting ? (
-                    <ActivityIndicator size="small" color="#16A34A" />
-                  ) : (
-                    <Ionicons
-                      name="document-text-outline"
-                      size={22}
-                      color="#16A34A"
-                    />
-                  )}
-                </View>
-
-                <View style={styles.settingText}>
-                  <Text style={[styles.settingTitle, { color: primaryText }]}>
-                    خروجی CSV
-                  </Text>
-
-                  <Text
-                    style={[styles.settingSubtitle, { color: secondaryText }]}
-                  >
-                    {trades.length > 0
-                      ? `${trades.length} معامله • داده خام`
-                      : 'هنوز معامله‌ای ثبت نکردی'}
-                  </Text>
-                </View>
-
-                <Ionicons
-                  name="chevron-back"
-                  size={20}
-                  color={secondaryText}
-                />
-              </TouchableOpacity>
-
-              {/* Excel */}
-              <TouchableOpacity
-                activeOpacity={0.8}
-                style={[styles.actionSettingRow, { borderColor }]}
-                onPress={handleExportExcel}
-                disabled={exporting || trades.length === 0}
-              >
-                <View
-                  style={[
-                    styles.settingIcon,
-                    {
-                      backgroundColor: isDark ? '#064E3B' : '#ECFDF5',
-                    },
-                  ]}
-                >
-                  {exporting ? (
-                    <ActivityIndicator size="small" color="#059669" />
-                  ) : (
-                    <Ionicons
-                      name="grid-outline"
-                      size={22}
-                      color="#059669"
-                    />
-                  )}
-                </View>
-
-                <View style={styles.settingText}>
-                  <Text style={[styles.settingTitle, { color: primaryText }]}>
-                    خروجی Excel
-                  </Text>
-
-                  <Text
-                    style={[styles.settingSubtitle, { color: secondaryText }]}
-                  >
-                    {trades.length > 0
-                      ? `${trades.length} معامله • آمار + جدول`
-                      : 'هنوز معامله‌ای ثبت نکردی'}
-                  </Text>
-                </View>
-
-                <Ionicons
-                  name="chevron-back"
-                  size={20}
-                  color={secondaryText}
-                />
-              </TouchableOpacity>
-
-              {/* PNG */}
-              <TouchableOpacity
-                activeOpacity={0.8}
-                style={[styles.actionSettingRow, { borderColor }]}
-                onPress={handleExportPNG}
-                disabled={exporting || trades.length === 0}
-              >
-                <View
-                  style={[
-                    styles.settingIcon,
-                    {
-                      backgroundColor: isDark ? '#450A0A' : '#FEF2F2',
-                    },
-                  ]}
-                >
-                  {exporting ? (
-                    <ActivityIndicator size="small" color="#DC2626" />
-                  ) : (
-                    <Ionicons
-                      name="image-outline"
-                      size={22}
-                      color="#DC2626"
-                    />
-                  )}
-                </View>
-
-                <View style={styles.settingText}>
-                  <Text style={[styles.settingTitle, { color: primaryText }]}>
-                    خروجی تصویر گزارش
-                  </Text>
-
-                  <Text
-                    style={[styles.settingSubtitle, { color: secondaryText }]}
-                  >
-                    {trades.length > 0
-                      ? `${trades.length} معامله • برای اشتراک‌گذاری`
-                      : 'هنوز معامله‌ای ثبت نکردی'}
-                  </Text>
-                </View>
-
-                <Ionicons
-                  name="chevron-back"
-                  size={20}
-                  color={secondaryText}
-                />
-              </TouchableOpacity>
-
-              {/* STATS */}
-              <Text
-                style={[styles.modalSectionTitle, { color: secondaryText }]}
-              >
-                اطلاعات و آمار
-              </Text>
-
-              <View style={[styles.settingRow, { borderColor }]}>
-                <View
-                  style={[
-                    styles.settingIcon,
-                    { backgroundColor: iconBackground },
-                  ]}
-                >
-                  <Ionicons
-                    name="stats-chart-outline"
-                    size={22}
-                    color={BLUE}
-                  />
-                </View>
-
-                <View style={styles.settingText}>
-                  <Text style={[styles.settingTitle, { color: primaryText }]}>
-                    نمایش آمار
-                  </Text>
-
-                  <Text
-                    style={[styles.settingSubtitle, { color: secondaryText }]}
-                  >
-                    دسترسی سریع به آمار ژورنال
-                  </Text>
-                </View>
-
-                <Switch
-                  value={settings.showStatistics}
-                  onValueChange={(value) =>
-                    updateSettings({ showStatistics: value })
-                  }
-                  trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
-                  thumbColor={settings.showStatistics ? BLUE : '#FFFFFF'}
                 />
               </View>
 
@@ -1153,10 +1405,11 @@ export default function MoreScreen() {
                 </View>
 
                 <View style={styles.settingText}>
-                  <Text style={[styles.settingTitle, { color: primaryText }]}>
+                  <Text
+                    style={[styles.settingTitle, { color: primaryText }]}
+                  >
                     حریم خصوصی
                   </Text>
-
                   <Text
                     style={[styles.settingSubtitle, { color: secondaryText }]}
                   >
@@ -1190,10 +1443,11 @@ export default function MoreScreen() {
                 </View>
 
                 <View style={styles.settingText}>
-                  <Text style={[styles.settingTitle, { color: primaryText }]}>
+                  <Text
+                    style={[styles.settingTitle, { color: primaryText }]}
+                  >
                     شرایط استفاده
                   </Text>
-
                   <Text
                     style={[styles.settingSubtitle, { color: secondaryText }]}
                   >
@@ -1233,7 +1487,6 @@ export default function MoreScreen() {
                     >
                       آمار ژورنال
                     </Text>
-
                     <Text
                       style={[
                         styles.settingSubtitle,
@@ -1282,7 +1535,6 @@ export default function MoreScreen() {
                   <Text style={styles.dangerTitle}>
                     پاک کردن ژورنال
                   </Text>
-
                   <Text style={styles.dangerSubtitle}>
                     حذف معاملات ذخیره‌شده روی این دستگاه
                   </Text>
@@ -1316,10 +1568,11 @@ export default function MoreScreen() {
                 </View>
 
                 <View style={styles.settingText}>
-                  <Text style={[styles.settingTitle, { color: primaryText }]}>
+                  <Text
+                    style={[styles.settingTitle, { color: primaryText }]}
+                  >
                     بازنشانی تنظیمات
                   </Text>
-
                   <Text
                     style={[styles.settingSubtitle, { color: secondaryText }]}
                   >
@@ -1355,9 +1608,7 @@ export default function MoreScreen() {
                 style={styles.doneButton}
                 onPress={() => setSettingsVisible(false)}
               >
-                <Text style={styles.doneButtonText}>
-                  ذخیره و بستن
-                </Text>
+                <Text style={styles.doneButtonText}>ذخیره و بستن</Text>
               </TouchableOpacity>
             </ScrollView>
           </View>
@@ -1420,10 +1671,11 @@ export default function MoreScreen() {
               </View>
 
               <View style={styles.contactText}>
-                <Text style={[styles.contactTitle, { color: primaryText }]}>
+                <Text
+                  style={[styles.contactTitle, { color: primaryText }]}
+                >
                   تلگرام
                 </Text>
-
                 <Text
                   style={[styles.contactSubtitle, { color: secondaryText }]}
                 >
@@ -1457,10 +1709,11 @@ export default function MoreScreen() {
               </View>
 
               <View style={styles.contactText}>
-                <Text style={[styles.contactTitle, { color: primaryText }]}>
+                <Text
+                  style={[styles.contactTitle, { color: primaryText }]}
+                >
                   روبیکا
                 </Text>
-
                 <Text
                   style={[styles.contactSubtitle, { color: secondaryText }]}
                 >
@@ -1486,18 +1739,15 @@ export default function MoreScreen() {
                   { backgroundColor: '#EFF6FF' },
                 ]}
               >
-                <Ionicons
-                  name="mail-outline"
-                  size={24}
-                  color={BLUE}
-                />
+                <Ionicons name="mail-outline" size={24} color={BLUE} />
               </View>
 
               <View style={styles.contactText}>
-                <Text style={[styles.contactTitle, { color: primaryText }]}>
+                <Text
+                  style={[styles.contactTitle, { color: primaryText }]}
+                >
                   ایمیل
                 </Text>
-
                 <Text
                   style={[styles.contactSubtitle, { color: secondaryText }]}
                 >
@@ -1532,10 +1782,7 @@ export default function MoreScreen() {
       >
         <View style={styles.modalOverlay}>
           <View
-            style={[
-              styles.aboutModal,
-              { backgroundColor: cardColor },
-            ]}
+            style={[styles.aboutModal, { backgroundColor: cardColor }]}
           >
             <ScrollView showsVerticalScrollIndicator={false}>
               <View style={styles.aboutLogo}>
@@ -1553,22 +1800,19 @@ export default function MoreScreen() {
               <Text
                 style={[styles.aboutDescription, { color: secondaryText }]}
               >
-                NAVASAN فقط یک ژورنال معاملاتی نیست.
-                هدف ما ساختن یک فضای یکپارچه برای
-                معامله‌گرهاست؛ جایی که بتوانند مسیر
-                معاملاتی خود را ثبت کنند، عملکردشان را
-                بررسی کنند، تحلیل‌های خود را به اشتراک
-                بگذارند، آموزش ببینند و ابزارهای موردنیاز
-                خود را در یک محیط منظم در اختیار داشته
-                باشند.
+                NAVASAN فقط یک ژورنال معاملاتی نیست. هدف ما
+                ساختن یک فضای یکپارچه برای معامله‌گرهاست؛
+                جایی که بتوانند مسیر معاملاتی خود را ثبت کنند،
+                عملکردشان را بررسی کنند، تحلیل‌های خود را به
+                اشتراک بگذارند، آموزش ببینند و ابزارهای
+                موردنیاز خود را در یک محیط منظم در اختیار
+                داشته باشند.
               </Text>
 
               <View
                 style={[
                   styles.aboutFeature,
-                  {
-                    backgroundColor: isDark ? '#18181B' : '#F8FAFC',
-                  },
+                  { backgroundColor: isDark ? '#18181B' : '#F8FAFC' },
                 ]}
               >
                 <View style={styles.aboutFeatureIcon}>
@@ -1581,15 +1825,14 @@ export default function MoreScreen() {
                   >
                     ژورنال معاملاتی
                   </Text>
-
                   <Text
                     style={[
                       styles.aboutFeatureDescription,
                       { color: secondaryText },
                     ]}
                   >
-                    ثبت معاملات، بررسی نتایج، مدیریت اطلاعات
-                    و شناخت بهتر عملکرد معاملاتی.
+                    ثبت معاملات، بررسی نتایج، مدیریت اطلاعات و
+                    شناخت بهتر عملکرد معاملاتی.
                   </Text>
                 </View>
               </View>
@@ -1597,9 +1840,7 @@ export default function MoreScreen() {
               <View
                 style={[
                   styles.aboutFeature,
-                  {
-                    backgroundColor: isDark ? '#18181B' : '#F8FAFC',
-                  },
+                  { backgroundColor: isDark ? '#18181B' : '#F8FAFC' },
                 ]}
               >
                 <View style={styles.aboutFeatureIcon}>
@@ -1616,15 +1857,14 @@ export default function MoreScreen() {
                   >
                     تحلیل و اتاق تحلیل
                   </Text>
-
                   <Text
                     style={[
                       styles.aboutFeatureDescription,
                       { color: secondaryText },
                     ]}
                   >
-                    بررسی بازار و اشتراک‌گذاری تحلیل‌ها با
-                    جامعه معامله‌گران NAVASAN.
+                    بررسی بازار و اشتراک‌گذاری تحلیل‌ها با جامعه
+                    معامله‌گران NAVASAN.
                   </Text>
                 </View>
               </View>
@@ -1632,13 +1872,15 @@ export default function MoreScreen() {
               <View
                 style={[
                   styles.aboutFeature,
-                  {
-                    backgroundColor: isDark ? '#18181B' : '#F8FAFC',
-                  },
+                  { backgroundColor: isDark ? '#18181B' : '#F8FAFC' },
                 ]}
               >
                 <View style={styles.aboutFeatureIcon}>
-                  <Ionicons name="school-outline" size={22} color={BLUE} />
+                  <Ionicons
+                    name="school-outline"
+                    size={22}
+                    color={BLUE}
+                  />
                 </View>
 
                 <View style={styles.aboutFeatureText}>
@@ -1647,15 +1889,14 @@ export default function MoreScreen() {
                   >
                     آموزش
                   </Text>
-
                   <Text
                     style={[
                       styles.aboutFeatureDescription,
                       { color: secondaryText },
                     ]}
                   >
-                    دسترسی به دوره‌ها و محتوای آموزشی برای
-                    توسعه دانش و مهارت معاملاتی.
+                    دسترسی به دوره‌ها و محتوای آموزشی برای توسعه
+                    دانش و مهارت معاملاتی.
                   </Text>
                 </View>
               </View>
@@ -1663,13 +1904,15 @@ export default function MoreScreen() {
               <View
                 style={[
                   styles.aboutFeature,
-                  {
-                    backgroundColor: isDark ? '#18181B' : '#F8FAFC',
-                  },
+                  { backgroundColor: isDark ? '#18181B' : '#F8FAFC' },
                 ]}
               >
                 <View style={styles.aboutFeatureIcon}>
-                  <Ionicons name="flash-outline" size={22} color={BLUE} />
+                  <Ionicons
+                    name="flash-outline"
+                    size={22}
+                    color={BLUE}
+                  />
                 </View>
 
                 <View style={styles.aboutFeatureText}>
@@ -1678,15 +1921,14 @@ export default function MoreScreen() {
                   >
                     ستاپ‌ها و ابزارها
                   </Text>
-
                   <Text
                     style={[
                       styles.aboutFeatureDescription,
                       { color: secondaryText },
                     ]}
                   >
-                    مجموعه‌ای از امکانات کاربردی برای
-                    سازمان‌دهی بهتر فرآیند معاملاتی.
+                    مجموعه‌ای از امکانات کاربردی برای سازمان‌دهی
+                    بهتر فرآیند معاملاتی.
                   </Text>
                 </View>
               </View>
@@ -1694,9 +1936,7 @@ export default function MoreScreen() {
               <View
                 style={[
                   styles.aboutFeature,
-                  {
-                    backgroundColor: isDark ? '#18181B' : '#F8FAFC',
-                  },
+                  { backgroundColor: isDark ? '#18181B' : '#F8FAFC' },
                 ]}
               >
                 <View style={styles.aboutFeatureIcon}>
@@ -1713,15 +1953,14 @@ export default function MoreScreen() {
                   >
                     فروشگاه
                   </Text>
-
                   <Text
                     style={[
                       styles.aboutFeatureDescription,
                       { color: secondaryText },
                     ]}
                   >
-                    بستری برای دسترسی به محصولات و منابع
-                    مرتبط با دنیای معامله‌گری.
+                    بستری برای دسترسی به محصولات و منابع مرتبط با
+                    دنیای معامله‌گری.
                   </Text>
                 </View>
               </View>
@@ -1729,27 +1968,28 @@ export default function MoreScreen() {
               <Text
                 style={[styles.aboutClosing, { color: secondaryText }]}
               >
-                NAVASAN با هدف ایجاد یک تجربه منظم،
-                کاربردی و حرفه‌ای برای معامله‌گران ساخته
-                شده و امکانات آن در طول زمان توسعه پیدا
-                خواهد کرد.
+                NAVASAN با هدف ایجاد یک تجربه منظم، کاربردی و
+                حرفه‌ای برای معامله‌گران ساخته شده و امکانات آن
+                در طول زمان توسعه پیدا خواهد کرد.
               </Text>
 
               <View
                 style={[
                   styles.aboutVersionBox,
-                  {
-                    backgroundColor: isDark ? '#18181B' : '#F8FAFC',
-                  },
+                  { backgroundColor: isDark ? '#18181B' : '#F8FAFC' },
                 ]}
               >
                 <Text
-                  style={[styles.aboutVersionLabel, { color: secondaryText }]}
+                  style={[
+                    styles.aboutVersionLabel,
+                    { color: secondaryText },
+                  ]}
                 >
                   نسخه فعلی
                 </Text>
-
-                <Text style={[styles.aboutVersion, { color: primaryText }]}>
+                <Text
+                  style={[styles.aboutVersion, { color: primaryText }]}
+                >
                   1.0.0
                 </Text>
               </View>
@@ -1774,12 +2014,7 @@ export default function MoreScreen() {
         onRequestClose={() => setFaqVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          <View
-            style={[
-              styles.faqModal,
-              { backgroundColor: cardColor },
-            ]}
-          >
+          <View style={[styles.faqModal, { backgroundColor: cardColor }]}>
             <View style={styles.modalHeader}>
               <TouchableOpacity
                 onPress={() => setFaqVisible(false)}
@@ -1797,109 +2032,113 @@ export default function MoreScreen() {
 
             <ScrollView showsVerticalScrollIndicator={false}>
               <View style={styles.faqItem}>
-                <Text style={[styles.faqQuestion, { color: primaryText }]}>
+                <Text
+                  style={[styles.faqQuestion, { color: primaryText }]}
+                >
                   NAVASAN چیست؟
                 </Text>
-
                 <Text style={[styles.faqAnswer, { color: secondaryText }]}>
-                  NAVASAN یک پلتفرم جامع برای معامله‌گران
-                  است که امکاناتی مانند ژورنال معاملاتی،
-                  تحلیل، آموزش، ستاپ‌ها، اتاق تحلیل و
-                  امکانات تکمیلی را در یک محیط واحد
-                  ارائه می‌کند.
+                  NAVASAN یک پلتفرم جامع برای معامله‌گران است
+                  که امکاناتی مانند ژورنال معاملاتی، تحلیل،
+                  آموزش، ستاپ‌ها، اتاق تحلیل و امکانات تکمیلی
+                  را در یک محیط واحد ارائه می‌کند.
                 </Text>
               </View>
 
               <View style={styles.faqItem}>
-                <Text style={[styles.faqQuestion, { color: primaryText }]}>
+                <Text
+                  style={[styles.faqQuestion, { color: primaryText }]}
+                >
                   آیا NAVASAN فقط برای ثبت معاملات است؟
                 </Text>
-
                 <Text style={[styles.faqAnswer, { color: secondaryText }]}>
-                  خیر. ژورنال یکی از بخش‌های اصلی NAVASAN
-                  است، اما برنامه با هدف ارائه یک تجربه
-                  کامل‌تر شامل تحلیل، آموزش، ستاپ‌ها،
-                  اشتراک‌گذاری تحلیل و امکانات مرتبط با
-                  معامله‌گری توسعه داده می‌شود.
+                  خیر. ژورنال یکی از بخش‌های اصلی NAVASAN است،
+                  اما برنامه با هدف ارائه یک تجربه کامل‌تر شامل
+                  تحلیل، آموزش، ستاپ‌ها، اشتراک‌گذاری تحلیل و
+                  امکانات مرتبط با معامله‌گری توسعه داده
+                  می‌شود.
                 </Text>
               </View>
 
               <View style={styles.faqItem}>
-                <Text style={[styles.faqQuestion, { color: primaryText }]}>
+                <Text
+                  style={[styles.faqQuestion, { color: primaryText }]}
+                >
                   اطلاعات ژورنال کجا ذخیره می‌شود؟
                 </Text>
-
                 <Text style={[styles.faqAnswer, { color: secondaryText }]}>
-                  در نسخه فعلی، اطلاعات ژورنال روی دستگاه
-                  ذخیره می‌شوند. معماری برنامه به‌گونه‌ای
-                  طراحی شده که امکانات آنلاین و
-                  همگام‌سازی در نسخه‌های بعدی قابل توسعه
-                  باشند.
+                  در نسخه فعلی، اطلاعات ژورنال روی دستگاه ذخیره
+                  می‌شوند. معماری برنامه به‌گونه‌ای طراحی شده که
+                  امکانات آنلاین و همگام‌سازی در نسخه‌های بعدی
+                  قابل توسعه باشند.
                 </Text>
               </View>
 
               <View style={styles.faqItem}>
-                <Text style={[styles.faqQuestion, { color: primaryText }]}>
+                <Text
+                  style={[styles.faqQuestion, { color: primaryText }]}
+                >
                   آیا می‌توان حالت تاریک را فعال کرد؟
                 </Text>
-
                 <Text style={[styles.faqAnswer, { color: secondaryText }]}>
-                  بله. از بخش تنظیمات می‌توان بین حالت
-                  روشن و تاریک جابه‌جا شد. انتخاب شما روی
-                  همین دستگاه ذخیره می‌شود.
+                  بله. از بخش تنظیمات می‌توان بین حالت روشن و
+                  تاریک جابه‌جا شد. انتخاب شما روی همین دستگاه
+                  ذخیره می‌شود.
                 </Text>
               </View>
 
               <View style={styles.faqItem}>
-                <Text style={[styles.faqQuestion, { color: primaryText }]}>
-                  اگر بخواهم اطلاعات ژورنالم را حذف کنم
-                  چه کار کنم؟
+                <Text
+                  style={[styles.faqQuestion, { color: primaryText }]}
+                >
+                  اگر بخواهم اطلاعات ژورنالم را حذف کنم چه کار
+                  کنم؟
                 </Text>
-
                 <Text style={[styles.faqAnswer, { color: secondaryText }]}>
                   از مسیر بیشتر ← تنظیمات ← مدیریت اطلاعات
-                  می‌توانی اطلاعات ژورنال ذخیره‌شده روی
-                  دستگاه را پاک کنی. قبل از حذف، در حالت
-                  پیش‌فرض از شما تأیید گرفته می‌شود.
+                  می‌توانی اطلاعات ژورنال ذخیره‌شده روی دستگاه
+                  را پاک کنی. قبل از حذف، در حالت پیش‌فرض از
+                  شما تأیید گرفته می‌شود.
                 </Text>
               </View>
 
               <View style={styles.faqItem}>
-                <Text style={[styles.faqQuestion, { color: primaryText }]}>
+                <Text
+                  style={[styles.faqQuestion, { color: primaryText }]}
+                >
                   چگونه با پشتیبانی ارتباط بگیرم؟
                 </Text>
-
                 <Text style={[styles.faqAnswer, { color: secondaryText }]}>
-                  از بخش تماس با ما می‌توانی از طریق
-                  تلگرام، روبیکا یا ایمیل با تیم NAVASAN
-                  ارتباط بگیری.
+                  از بخش تماس با ما می‌توانی از طریق تلگرام،
+                  روبیکا یا ایمیل با تیم NAVASAN ارتباط بگیری.
                 </Text>
               </View>
 
               <View style={styles.faqItem}>
-                <Text style={[styles.faqQuestion, { color: primaryText }]}>
+                <Text
+                  style={[styles.faqQuestion, { color: primaryText }]}
+                >
                   آیا امکانات جدید به NAVASAN اضافه می‌شود؟
                 </Text>
-
                 <Text style={[styles.faqAnswer, { color: secondaryText }]}>
-                  بله. NAVASAN به‌صورت مرحله‌ای توسعه پیدا
-                  می‌کند و هدف آن اضافه شدن امکانات بیشتر
-                  برای مدیریت، تحلیل و آموزش معامله‌گران
-                  است.
+                  بله. NAVASAN به‌صورت مرحله‌ای توسعه پیدا می‌کند
+                  و هدف آن اضافه شدن امکانات بیشتر برای مدیریت،
+                  تحلیل و آموزش معامله‌گران است.
                 </Text>
               </View>
 
               <View style={styles.faqItem}>
-                <Text style={[styles.faqQuestion, { color: primaryText }]}>
+                <Text
+                  style={[styles.faqQuestion, { color: primaryText }]}
+                >
                   آیا NAVASAN سیگنال معاملاتی ارائه می‌دهد؟
                 </Text>
-
                 <Text style={[styles.faqAnswer, { color: secondaryText }]}>
-                  هدف NAVASAN فراهم کردن ابزار و محیطی برای
-                  ثبت، تحلیل، آموزش و بهبود فرآیند تصمیم‌گیری
-                  معامله‌گر است و نباید امکانات آموزشی یا
-                  تحلیلی برنامه را به‌عنوان تضمین نتیجه
-                  معاملاتی در نظر گرفت.
+                  هدف NAVASAN فراهم کردن ابزار و محیطی برای ثبت،
+                  تحلیل، آموزش و بهبود فرآیند تصمیم‌گیری
+                  معامله‌گر است و نباید امکانات آموزشی یا تحلیلی
+                  برنامه را به‌عنوان تضمین نتیجه معاملاتی در
+                  نظر گرفت.
                 </Text>
               </View>
             </ScrollView>
@@ -1923,12 +2162,7 @@ export default function MoreScreen() {
         onRequestClose={() => setPrivacyVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          <View
-            style={[
-              styles.textModal,
-              { backgroundColor: cardColor },
-            ]}
-          >
+          <View style={[styles.textModal, { backgroundColor: cardColor }]}>
             <View style={styles.modalHeader}>
               <TouchableOpacity
                 onPress={() => setPrivacyVisible(false)}
@@ -1948,19 +2182,17 @@ export default function MoreScreen() {
               <Text style={[styles.policyTitle, { color: primaryText }]}>
                 اطلاعات شما
               </Text>
-
               <Text style={[styles.policyText, { color: secondaryText }]}>
-                NAVASAN تلاش می‌کند اطلاعات کاربران را فقط
-                برای ارائه و بهبود امکانات برنامه استفاده
-                کند. اطلاعات حساب کاربری و داده‌های مرتبط
-                با امکانات آنلاین، مطابق معماری سرویس
-                مربوطه مدیریت می‌شوند.
+                NAVASAN تلاش می‌کند اطلاعات کاربران را فقط برای
+                ارائه و بهبود امکانات برنامه استفاده کند.
+                اطلاعات حساب کاربری و داده‌های مرتبط با امکانات
+                آنلاین، مطابق معماری سرویس مربوطه مدیریت
+                می‌شوند.
               </Text>
 
               <Text style={[styles.policyTitle, { color: primaryText }]}>
                 اطلاعات ژورنال
               </Text>
-
               <Text style={[styles.policyText, { color: secondaryText }]}>
                 در نسخه فعلی، داده‌های ژورنال معاملاتی روی
                 دستگاه کاربر نگهداری می‌شوند. حذف آن‌ها از
@@ -1970,22 +2202,19 @@ export default function MoreScreen() {
               <Text style={[styles.policyTitle, { color: primaryText }]}>
                 امنیت حساب
               </Text>
-
               <Text style={[styles.policyText, { color: secondaryText }]}>
                 برای اطلاعات حساب و قابلیت‌های آنلاین،
                 دسترسی‌ها و داده‌ها باید به شکل امن مدیریت
-                شوند. کاربران نیز باید از نگهداری امن
-                اطلاعات ورود خود اطمینان داشته باشند.
+                شوند. کاربران نیز باید از نگهداری امن اطلاعات
+                ورود خود اطمینان داشته باشند.
               </Text>
 
               <Text style={[styles.policyTitle, { color: primaryText }]}>
                 تغییرات آینده
               </Text>
-
               <Text style={[styles.policyText, { color: secondaryText }]}>
-                با توسعه NAVASAN و اضافه شدن قابلیت‌های
-                جدید، این بخش نیز می‌تواند به‌روزرسانی
-                شود.
+                با توسعه NAVASAN و اضافه شدن قابلیت‌های جدید،
+                این بخش نیز می‌تواند به‌روزرسانی شود.
               </Text>
             </ScrollView>
 
@@ -2008,12 +2237,7 @@ export default function MoreScreen() {
         onRequestClose={() => setTermsVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          <View
-            style={[
-              styles.textModal,
-              { backgroundColor: cardColor },
-            ]}
-          >
+          <View style={[styles.textModal, { backgroundColor: cardColor }]}>
             <View style={styles.modalHeader}>
               <TouchableOpacity
                 onPress={() => setTermsVisible(false)}
@@ -2033,44 +2257,38 @@ export default function MoreScreen() {
               <Text style={[styles.policyTitle, { color: primaryText }]}>
                 استفاده از برنامه
               </Text>
-
               <Text style={[styles.policyText, { color: secondaryText }]}>
-                استفاده از NAVASAN به معنی پذیرش قوانین و
-                شرایط استفاده از برنامه است. کاربر مسئول
-                اطلاعاتی است که در حساب خود وارد یا در
-                برنامه ثبت می‌کند.
+                استفاده از NAVASAN به معنی پذیرش قوانین و شرایط
+                استفاده از برنامه است. کاربر مسئول اطلاعاتی است
+                که در حساب خود وارد یا در برنامه ثبت می‌کند.
               </Text>
 
               <Text style={[styles.policyTitle, { color: primaryText }]}>
                 مسئولیت معاملاتی
               </Text>
-
               <Text style={[styles.policyText, { color: secondaryText }]}>
-                NAVASAN یک ابزار نرم‌افزاری برای ثبت،
-                تحلیل، آموزش و مدیریت اطلاعات معاملاتی
-                است. استفاده از امکانات برنامه به معنی
-                تضمین سود یا نتیجه معاملاتی نیست و تصمیم
-                نهایی معامله‌گری بر عهده خود کاربر است.
+                NAVASAN یک ابزار نرم‌افزاری برای ثبت، تحلیل،
+                آموزش و مدیریت اطلاعات معاملاتی است. استفاده از
+                امکانات برنامه به معنی تضمین سود یا نتیجه
+                معاملاتی نیست و تصمیم نهایی معامله‌گری بر عهده
+                خود کاربر است.
               </Text>
 
               <Text style={[styles.policyTitle, { color: primaryText }]}>
                 محتوای کاربران
               </Text>
-
               <Text style={[styles.policyText, { color: secondaryText }]}>
-                در بخش‌هایی مانند اتاق تحلیل، کاربران ممکن
-                است محتوا یا تحلیل خود را منتشر کنند.
-                مسئولیت محتوای منتشرشده بر عهده منتشرکننده
-                آن است.
+                در بخش‌هایی مانند اتاق تحلیل، کاربران ممکن است
+                محتوا یا تحلیل خود را منتشر کنند. مسئولیت
+                محتوای منتشرشده بر عهده منتشرکننده آن است.
               </Text>
 
               <Text style={[styles.policyTitle, { color: primaryText }]}>
                 تغییر شرایط
               </Text>
-
               <Text style={[styles.policyText, { color: secondaryText }]}>
-                با توسعه و اضافه شدن قابلیت‌های جدید،
-                شرایط استفاده ممکن است به‌روزرسانی شود.
+                با توسعه و اضافه شدن قابلیت‌های جدید، شرایط
+                استفاده ممکن است به‌روزرسانی شود.
               </Text>
             </ScrollView>
 
@@ -2093,12 +2311,7 @@ export default function MoreScreen() {
         onRequestClose={() => setStatsVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          <View
-            style={[
-              styles.statsModal,
-              { backgroundColor: cardColor },
-            ]}
-          >
+          <View style={[styles.statsModal, { backgroundColor: cardColor }]}>
             <View style={styles.modalHeader}>
               <TouchableOpacity
                 onPress={() => setStatsVisible(false)}
@@ -2117,9 +2330,7 @@ export default function MoreScreen() {
             <View
               style={[
                 styles.bigStatCard,
-                {
-                  backgroundColor: isDark ? '#172554' : '#EFF6FF',
-                },
+                { backgroundColor: isDark ? '#172554' : '#EFF6FF' },
               ]}
             >
               <Ionicons name="bar-chart-outline" size={30} color={BLUE} />
@@ -2136,8 +2347,8 @@ export default function MoreScreen() {
             <Text
               style={[styles.statsDescription, { color: secondaryText }]}
             >
-              این عدد تعداد معاملات ذخیره‌شده فعلی در
-              ژورنال روی همین دستگاه را نشان می‌دهد.
+              این عدد تعداد معاملات ذخیره‌شده فعلی در ژورنال
+              روی همین دستگاه را نشان می‌دهد.
             </Text>
 
             <TouchableOpacity
@@ -2150,22 +2361,6 @@ export default function MoreScreen() {
           </View>
         </View>
       </Modal>
-
-      {/* ================================================ */}
-      {/* OFF-SCREEN EXPORT CARD (for PNG capture) */}
-      {/* ================================================ */}
-
-      <View
-        pointerEvents="none"
-        style={{
-          position: 'absolute',
-          left: -9999,
-          top: 0,
-          opacity: 0,
-        }}
-      >
-        <ExportPreviewCard ref={exportCardRef} stats={exportStats} />
-      </View>
     </View>
   );
 }
