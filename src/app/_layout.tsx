@@ -6,6 +6,7 @@ import {
   NavasanThemeProvider,
   useNavasanTheme,
 } from '@/context/theme-context';
+import { XPProvider } from '@/context/xp-context';
 
 function NavasanNavigation() {
   const { isDark } = useNavasanTheme();
@@ -17,7 +18,6 @@ function NavasanNavigation() {
 
     const setupNotifications = async () => {
       try {
-        // ⚠️ همه چیز داخل try/catch تا اپ کرش نکنه
         const Notifications = await import('expo-notifications');
         const Device = await import('expo-device');
         const { Platform } = await import('react-native');
@@ -27,7 +27,6 @@ function NavasanNavigation() {
           return;
         }
 
-        // درخواست مجوز
         let granted = false;
         try {
           const { status: existing } = await Notifications.getPermissionsAsync();
@@ -38,48 +37,37 @@ function NavasanNavigation() {
           }
           granted = finalStatus === 'granted';
         } catch (e) {
-          console.log('[NOTIF] مجوز خطا داد (نادیده گرفته شد):', e);
+          console.log('[NOTIF] مجوز خطا:', e);
           return;
         }
 
-        if (cancelled) return;
-        if (!granted) {
-          console.log('[NOTIF] کاربر مجوز نداد');
-          return;
-        }
+        if (cancelled || !granted) return;
 
-        // کانال اندروید
         if (Platform.OS === 'android') {
           try {
             await Notifications.setNotificationChannelAsync('default', {
               name: 'NAVASAN',
               importance: Notifications.AndroidImportance.HIGH,
             });
-          } catch (e) {
-            console.log('[NOTIF] ساخت کانال خطا (نادیده):', e);
-          }
+          } catch {}
         }
 
-        // لیسنرها
         try {
           responseListener = Notifications.addNotificationResponseReceivedListener(
             (response: any) => {
-              console.log('[NOTIF] کلیک شد:', response?.notification?.request?.content?.data);
+              console.log('[NOTIF] کلیک:', response?.notification?.request?.content?.data);
             }
           );
           receivedListener = Notifications.addNotificationReceivedListener(
             (notification: any) => {
-              console.log('[NOTIF] دریافت شد:', notification);
+              console.log('[NOTIF] دریافت:', notification);
             }
           );
-        } catch (e) {
-          console.log('[NOTIF] لیسنر خطا (نادیده):', e);
-        }
+        } catch {}
 
-        console.log('[NOTIF] راه‌اندازی کامل شد ✅');
+        console.log('[NOTIF] راه‌اندازی کامل ✅');
       } catch (e) {
-        // ⚠️ هیچ خطایی از اینجا بیرون نمی‌زنه
-        console.log('[NOTIF] خطای کلی (نادیده گرفته شد):', e);
+        console.log('[NOTIF] خطای کلی:', e);
       }
     };
 
@@ -102,7 +90,9 @@ function NavasanNavigation() {
 export default function TabLayout() {
   return (
     <NavasanThemeProvider>
-      <NavasanNavigation />
+      <XPProvider>
+        <NavasanNavigation />
+      </XPProvider>
     </NavasanThemeProvider>
   );
 }

@@ -14,6 +14,7 @@ import {
 import { LineChart } from 'react-native-chart-kit';
 
 import { useNavasanTheme } from '@/context/theme-context';
+import { useXP } from '@/context/xp-context';
 
 // =========================================================
 // TYPES
@@ -73,13 +74,6 @@ const formatMoney = (value: number, decimals = 2) => {
   return `${sign}$${Math.abs(value).toFixed(decimals)}`;
 };
 
-const formatMoneyShort = (value: number) => {
-  if (Math.abs(value) >= 1000) {
-    return `${value >= 0 ? '+' : '-'}$${(Math.abs(value) / 1000).toFixed(1)}K`;
-  }
-  return formatMoney(value, 0);
-};
-
 const formatDate = (value: string) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'بدون تاریخ';
@@ -106,6 +100,7 @@ const getDayKey = (dateStr: string) => {
 
 export default function Dashboard() {
   const { colors, isDark } = useNavasanTheme();
+  const { levelInfo, state: xpState } = useXP();
 
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
@@ -254,11 +249,6 @@ export default function Dashboard() {
     const bestTrade = trades.reduce((b, t) => Math.max(b, toNumber(t.result)), 0);
     const worstTrade = trades.reduce((w, t) => Math.min(w, toNumber(t.result)), 0);
 
-    // 7 day performance
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
-    sevenDaysAgo.setHours(0, 0, 0, 0);
-
     const last7Days: { day: string; pnl: number }[] = [];
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
@@ -273,7 +263,6 @@ export default function Dashboard() {
       });
     }
 
-    // Winning days vs losing days
     const dayMap: Record<string, number> = {};
     trades.forEach((t) => {
       const k = getDayKey(t.date);
@@ -283,7 +272,6 @@ export default function Dashboard() {
     const greenDays = dayValues.filter((v) => v > 0).length;
     const redDays = dayValues.filter((v) => v < 0).length;
 
-    // Plan adherence
     const planAdherence =
       total > 0
         ? (trades.filter((t) => t.followedPlan).length / total) * 100
@@ -334,7 +322,6 @@ export default function Dashboard() {
     index === 0 ? 'شروع' : `${index}`
   );
 
-  // Daily goal percent
   const dailyGoalPct = useMemo(() => {
     if (dailyTarget <= 0) return 0;
     return Math.min(Math.max((stats.todayNet / dailyTarget) * 100, 0), 100);
@@ -345,7 +332,6 @@ export default function Dashboard() {
     return Math.min((Math.abs(stats.todayNet) / dailyMaxLoss) * 100, 100);
   }, [stats.todayNet, dailyMaxLoss]);
 
-  // Quick insights
   const insights = useMemo(() => {
     const list: { icon: string; text: string; color: string }[] = [];
 
@@ -454,18 +440,30 @@ export default function Dashboard() {
           />
         }
       >
-        {/* ================= HEADER ================= */}
+        {/* HEADER */}
         <View style={styles.header}>
           <View>
             <Text style={[styles.greeting, { color: MUTED }]}>
               {getGreeting()}
             </Text>
-            <Text style={[styles.brand, { color: TEXT }]}>
-              NAVASAN
-            </Text>
+            <Text style={[styles.brand, { color: TEXT }]}>NAVASAN</Text>
           </View>
 
           <View style={styles.headerActions}>
+            {/* ✅ XP PILL */}
+            <TouchableOpacity
+              onPress={() => router.push('/profile-xp' as any)}
+              style={[styles.xpPill, { backgroundColor: levelInfo.color }]}
+              activeOpacity={0.85}
+            >
+              <Ionicons
+                name={levelInfo.icon as any}
+                size={14}
+                color="#FFFFFF"
+              />
+              <Text style={styles.xpPillText}>{xpState.totalXP} XP</Text>
+            </TouchableOpacity>
+
             <TouchableOpacity
               style={[
                 styles.iconButton,
@@ -497,27 +495,11 @@ export default function Dashboard() {
           </View>
         </View>
 
-        {/* ================= HERO BALANCE CARD ================= */}
+        {/* HERO BALANCE CARD */}
         <View style={styles.heroWrapper}>
-          {/* Decorative backgrounds */}
-          <View
-            style={[
-              styles.heroBgLayer,
-              { backgroundColor: BLUE, opacity: 1 },
-            ]}
-          />
-          <View
-            style={[
-              styles.heroCircle1,
-              { backgroundColor: BLUE_LIGHT },
-            ]}
-          />
-          <View
-            style={[
-              styles.heroCircle2,
-              { backgroundColor: BLUE_DARK },
-            ]}
-          />
+          <View style={[styles.heroBgLayer, { backgroundColor: BLUE }]} />
+          <View style={[styles.heroCircle1, { backgroundColor: BLUE_LIGHT }]} />
+          <View style={[styles.heroCircle2, { backgroundColor: BLUE_DARK }]} />
 
           <View style={styles.heroContent}>
             <View style={styles.heroTop}>
@@ -553,11 +535,7 @@ export default function Dashboard() {
               </View>
 
               <View style={styles.heroBadge}>
-                <Ionicons
-                  name="trending-up"
-                  size={26}
-                  color="#FFFFFF"
-                />
+                <Ionicons name="trending-up" size={26} color="#FFFFFF" />
               </View>
             </View>
 
@@ -586,26 +564,18 @@ export default function Dashboard() {
           </View>
         </View>
 
-        {/* ================= TODAY PROGRESS ================= */}
+        {/* TODAY PROGRESS */}
         <View
-          style={[
-            styles.todayCard,
-            { backgroundColor: CARD, borderColor: BORDER },
-          ]}
+          style={[styles.todayCard, { backgroundColor: CARD, borderColor: BORDER }]}
         >
           <View style={styles.todayHeader}>
             <View style={styles.todayHeaderLeft}>
               <View
-                style={[
-                  styles.todayIconWrap,
-                  { backgroundColor: `${BLUE}18` },
-                ]}
+                style={[styles.todayIconWrap, { backgroundColor: `${BLUE}18` }]}
               >
                 <Ionicons name="today-outline" size={18} color={BLUE} />
               </View>
-              <Text style={[styles.todayTitle, { color: TEXT }]}>
-                امروز
-              </Text>
+              <Text style={[styles.todayTitle, { color: TEXT }]}>امروز</Text>
             </View>
 
             <View style={styles.todayChipRow}>
@@ -614,9 +584,7 @@ export default function Dashboard() {
                   styles.todayChip,
                   {
                     backgroundColor:
-                      stats.todayNet >= 0
-                        ? `${GREEN}18`
-                        : `${RED}18`,
+                      stats.todayNet >= 0 ? `${GREEN}18` : `${RED}18`,
                   },
                 ]}
               >
@@ -630,10 +598,7 @@ export default function Dashboard() {
                 </Text>
               </View>
               <View
-                style={[
-                  styles.todayChip,
-                  { backgroundColor: `${PURPLE}18` },
-                ]}
+                style={[styles.todayChip, { backgroundColor: `${PURPLE}18` }]}
               >
                 <Text style={[styles.todayChipText, { color: PURPLE }]}>
                   {stats.todayCount}/{dailyMaxTrades}
@@ -642,7 +607,6 @@ export default function Dashboard() {
             </View>
           </View>
 
-          {/* Target Progress */}
           <View style={styles.progressBlock}>
             <View style={styles.progressLabels}>
               <Text style={[styles.progressLabel, { color: MUTED }]}>
@@ -653,18 +617,14 @@ export default function Dashboard() {
               </Text>
             </View>
             <View
-              style={[
-                styles.progressTrack,
-                { backgroundColor: colors.input },
-              ]}
+              style={[styles.progressTrack, { backgroundColor: colors.input }]}
             >
               <View
                 style={[
                   styles.progressFill,
                   {
                     width: `${dailyGoalPct}%`,
-                    backgroundColor:
-                      dailyGoalPct >= 100 ? GREEN : BLUE,
+                    backgroundColor: dailyGoalPct >= 100 ? GREEN : BLUE,
                   },
                 ]}
               />
@@ -674,7 +634,6 @@ export default function Dashboard() {
             </Text>
           </View>
 
-          {/* Loss Progress (only if in loss) */}
           {stats.todayNet < 0 && (
             <View style={styles.progressBlock}>
               <View style={styles.progressLabels}>
@@ -686,10 +645,7 @@ export default function Dashboard() {
                 </Text>
               </View>
               <View
-                style={[
-                  styles.progressTrack,
-                  { backgroundColor: colors.input },
-                ]}
+                style={[styles.progressTrack, { backgroundColor: colors.input }]}
               >
                 <View
                   style={[
@@ -708,7 +664,7 @@ export default function Dashboard() {
           )}
         </View>
 
-        {/* ================= 7-DAY PERFORMANCE ================= */}
+        {/* 7-DAY PERFORMANCE */}
         <View
           style={[
             styles.sevenDayCard,
@@ -727,23 +683,13 @@ export default function Dashboard() {
 
             <View style={styles.daysCounter}>
               <View style={styles.dayBadge}>
-                <View
-                  style={[
-                    styles.dayDot,
-                    { backgroundColor: GREEN },
-                  ]}
-                />
+                <View style={[styles.dayDot, { backgroundColor: GREEN }]} />
                 <Text style={[styles.dayBadgeText, { color: TEXT }]}>
                   {stats.greenDays}
                 </Text>
               </View>
               <View style={styles.dayBadge}>
-                <View
-                  style={[
-                    styles.dayDot,
-                    { backgroundColor: RED },
-                  ]}
-                />
+                <View style={[styles.dayDot, { backgroundColor: RED }]} />
                 <Text style={[styles.dayBadgeText, { color: TEXT }]}>
                   {stats.redDays}
                 </Text>
@@ -779,16 +725,14 @@ export default function Dashboard() {
                       ]}
                     />
                   </View>
-                  <Text style={[styles.dayName, { color: MUTED }]}>
-                    {d.day}
-                  </Text>
+                  <Text style={[styles.dayName, { color: MUTED }]}>{d.day}</Text>
                 </View>
               );
             })}
           </View>
         </View>
 
-        {/* ================= INSIGHTS ================= */}
+        {/* INSIGHTS */}
         {insights.length > 0 && (
           <View style={styles.insightsSection}>
             <View style={styles.sectionHeader}>
@@ -796,10 +740,7 @@ export default function Dashboard() {
                 بینش سریع
               </Text>
               <View
-                style={[
-                  styles.insightBadge,
-                  { backgroundColor: `${BLUE}18` },
-                ]}
+                style={[styles.insightBadge, { backgroundColor: `${BLUE}18` }]}
               >
                 <Ionicons name="sparkles" size={11} color={BLUE} />
                 <Text style={[styles.insightBadgeText, { color: BLUE }]}>
@@ -822,11 +763,7 @@ export default function Dashboard() {
                     { backgroundColor: `${ins.color}18` },
                   ]}
                 >
-                  <Ionicons
-                    name={ins.icon as any}
-                    size={17}
-                    color={ins.color}
-                  />
+                  <Ionicons name={ins.icon as any} size={17} color={ins.color} />
                 </View>
                 <Text style={[styles.insightText, { color: TEXT }]}>
                   {ins.text}
@@ -836,11 +773,9 @@ export default function Dashboard() {
           </View>
         )}
 
-        {/* ================= STATS GRID ================= */}
+        {/* STATS GRID */}
         <View style={styles.sectionHeader}>
-          <Text style={[styles.sectionTitle, { color: TEXT }]}>
-            آمار کلیدی
-          </Text>
+          <Text style={[styles.sectionTitle, { color: TEXT }]}>آمار کلیدی</Text>
           <Text style={[styles.sectionHint, { color: MUTED }]}>
             {stats.total} معامله
           </Text>
@@ -921,7 +856,7 @@ export default function Dashboard() {
           />
         </View>
 
-        {/* ================= PROFESSIONAL METRICS ================= */}
+        {/* PRO METRICS */}
         {stats.total >= 5 && (
           <View
             style={[
@@ -984,12 +919,9 @@ export default function Dashboard() {
           </View>
         )}
 
-        {/* ================= EQUITY CHART ================= */}
+        {/* EQUITY CHART */}
         <View
-          style={[
-            styles.card,
-            { backgroundColor: CARD, borderColor: BORDER },
-          ]}
+          style={[styles.card, { backgroundColor: CARD, borderColor: BORDER }]}
         >
           <View style={styles.cardHeader}>
             <View>
@@ -1003,10 +935,7 @@ export default function Dashboard() {
               </Text>
             </View>
             <View
-              style={[
-                styles.chartIconWrap,
-                { backgroundColor: `${BLUE}18` },
-              ]}
+              style={[styles.chartIconWrap, { backgroundColor: `${BLUE}18` }]}
             >
               <Ionicons name="analytics-outline" size={20} color={BLUE} />
             </View>
@@ -1052,11 +981,7 @@ export default function Dashboard() {
                   { backgroundColor: `${BLUE}12` },
                 ]}
               >
-                <Ionicons
-                  name="bar-chart-outline"
-                  size={32}
-                  color={BLUE}
-                />
+                <Ionicons name="bar-chart-outline" size={32} color={BLUE} />
               </View>
               <Text style={[styles.emptyTitle, { color: TEXT }]}>
                 {initialBalance === null
@@ -1070,10 +995,7 @@ export default function Dashboard() {
               </Text>
               {initialBalance === null && (
                 <TouchableOpacity
-                  style={[
-                    styles.emptyAction,
-                    { backgroundColor: BLUE },
-                  ]}
+                  style={[styles.emptyAction, { backgroundColor: BLUE }]}
                   onPress={() =>
                     router.push({
                       pathname: '/',
@@ -1081,16 +1003,14 @@ export default function Dashboard() {
                     })
                   }
                 >
-                  <Text style={styles.emptyActionText}>
-                    ثبت سرمایه اولیه
-                  </Text>
+                  <Text style={styles.emptyActionText}>ثبت سرمایه اولیه</Text>
                 </TouchableOpacity>
               )}
             </View>
           )}
         </View>
 
-        {/* ================= RECENT TRADES ================= */}
+        {/* RECENT TRADES */}
         <View style={styles.sectionHeader}>
           <Text style={[styles.sectionTitle, { color: TEXT }]}>
             معاملات اخیر
@@ -1099,18 +1019,13 @@ export default function Dashboard() {
             onPress={() => router.push('/' as any)}
             style={styles.seeAllBtn}
           >
-            <Text style={[styles.seeAllText, { color: BLUE }]}>
-              مشاهده همه
-            </Text>
+            <Text style={[styles.seeAllText, { color: BLUE }]}>مشاهده همه</Text>
             <Ionicons name="chevron-forward" size={14} color={BLUE} />
           </TouchableOpacity>
         </View>
 
         <View
-          style={[
-            styles.card,
-            { backgroundColor: CARD, borderColor: BORDER },
-          ]}
+          style={[styles.card, { backgroundColor: CARD, borderColor: BORDER }]}
         >
           {recentTrades.length === 0 ? (
             <View style={styles.emptyRecent}>
@@ -1120,11 +1035,7 @@ export default function Dashboard() {
                   { backgroundColor: `${BLUE}12` },
                 ]}
               >
-                <Ionicons
-                  name="book-outline"
-                  size={32}
-                  color={BLUE}
-                />
+                <Ionicons name="book-outline" size={32} color={BLUE} />
               </View>
               <Text style={[styles.emptyTitle, { color: TEXT }]}>
                 ژورنال هنوز خالیه
@@ -1162,11 +1073,7 @@ export default function Dashboard() {
                   >
                     <Ionicons
                       name={
-                        win
-                          ? 'arrow-up'
-                          : loss
-                          ? 'arrow-down'
-                          : 'remove'
+                        win ? 'arrow-up' : loss ? 'arrow-down' : 'remove'
                       }
                       size={17}
                       color={win ? GREEN : loss ? RED : MUTED}
@@ -1211,7 +1118,7 @@ export default function Dashboard() {
           )}
         </View>
 
-        {/* ================= REGISTER BUTTON ================= */}
+        {/* REGISTER BUTTON */}
         <TouchableOpacity
           style={styles.registerButton}
           activeOpacity={0.9}
@@ -1228,9 +1135,7 @@ export default function Dashboard() {
             </View>
 
             <View style={styles.registerTextWrap}>
-              <Text style={styles.registerTitle}>
-                ثبت معامله جدید
-              </Text>
+              <Text style={styles.registerTitle}>ثبت معامله جدید</Text>
               <Text style={styles.registerSubtitle}>
                 معامله بعدی رو در ژورنال ثبت کن
               </Text>
@@ -1275,33 +1180,16 @@ function StatCard({
     <View
       style={[
         styles.statCard,
-        {
-          backgroundColor: cardColor,
-          borderColor,
-        },
+        { backgroundColor: cardColor, borderColor },
       ]}
     >
       <View style={[styles.statIconWrap, { backgroundColor: bg }]}>
         <Ionicons name={icon} size={18} color={iconColor} />
       </View>
 
-      <Text
-        style={[
-          styles.statLabel,
-          { color: labelColor },
-        ]}
-      >
-        {label}
-      </Text>
+      <Text style={[styles.statLabel, { color: labelColor }]}>{label}</Text>
 
-      <Text
-        style={[
-          styles.statValue,
-          { color: valueColor },
-        ]}
-      >
-        {value}
-      </Text>
+      <Text style={[styles.statValue, { color: valueColor }]}>{value}</Text>
     </View>
   );
 }
@@ -1329,14 +1217,9 @@ function ProMetric({
 }) {
   return (
     <View
-      style={[
-        styles.proMetricItem,
-        { backgroundColor: bg, borderColor: border },
-      ]}
+      style={[styles.proMetricItem, { backgroundColor: bg, borderColor: border }]}
     >
-      <Text style={[styles.proMetricLabel, { color: mutedColor }]}>
-        {label}
-      </Text>
+      <Text style={[styles.proMetricLabel, { color: mutedColor }]}>{label}</Text>
       <Text style={[styles.proMetricValue, { color }]}>{value}</Text>
     </View>
   );
@@ -1352,24 +1235,15 @@ const styles = StyleSheet.create({
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   loadingText: { marginTop: 12, fontSize: 14, fontWeight: '600' },
 
-  // HEADER
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 20,
   },
-  greeting: {
-    fontSize: 12,
-    fontWeight: '600',
-    marginBottom: 2,
-  },
-  brand: {
-    fontSize: 24,
-    fontWeight: '900',
-    letterSpacing: 1.2,
-  },
-  headerActions: { flexDirection: 'row', gap: 8 },
+  greeting: { fontSize: 12, fontWeight: '600', marginBottom: 2 },
+  brand: { fontSize: 24, fontWeight: '900', letterSpacing: 1.2 },
+  headerActions: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   iconButton: {
     width: 42,
     height: 42,
@@ -1379,7 +1253,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
 
-  // HERO
+  xpPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    borderRadius: 12,
+    height: 42,
+  },
+  xpPillText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+
   heroWrapper: {
     borderRadius: 26,
     marginBottom: 18,
@@ -1391,7 +1279,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 10 },
     elevation: 8,
   },
-    heroBgLayer: {
+  heroBgLayer: {
     position: 'absolute',
     top: 0,
     left: 0,
@@ -1416,11 +1304,7 @@ const styles = StyleSheet.create({
     left: -50,
     opacity: 0.3,
   },
-  heroContent: {
-    padding: 22,
-    position: 'relative',
-    zIndex: 2,
-  },
+  heroContent: { padding: 22, position: 'relative', zIndex: 2 },
   heroTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1477,13 +1361,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: 4,
   },
-  heroStatValue: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '900',
-  },
+  heroStatValue: { color: '#FFFFFF', fontSize: 15, fontWeight: '900' },
 
-  // TODAY CARD
   todayCard: {
     borderRadius: 20,
     borderWidth: 1,
@@ -1496,11 +1375,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 14,
   },
-  todayHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
+  todayHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   todayIconWrap: {
     width: 36,
     height: 36,
@@ -1508,20 +1383,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  todayTitle: {
-    fontSize: 15,
-    fontWeight: '900',
-  },
+  todayTitle: { fontSize: 15, fontWeight: '900' },
   todayChipRow: { flexDirection: 'row', gap: 6 },
   todayChip: {
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 10,
   },
-  todayChipText: {
-    fontSize: 12,
-    fontWeight: '900',
-  },
+  todayChipText: { fontSize: 12, fontWeight: '900' },
   progressBlock: { marginBottom: 12 },
   progressLabels: {
     flexDirection: 'row',
@@ -1530,15 +1399,10 @@ const styles = StyleSheet.create({
   },
   progressLabel: { fontSize: 11, fontWeight: '700' },
   progressValue: { fontSize: 12, fontWeight: '900' },
-  progressTrack: {
-    height: 8,
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
+  progressTrack: { height: 8, borderRadius: 4, overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 4 },
   progressHint: { fontSize: 10, fontWeight: '600', marginTop: 5 },
 
-  // SEVEN DAY
   sevenDayCard: {
     borderRadius: 20,
     borderWidth: 1,
@@ -1579,18 +1443,9 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     alignItems: 'center',
   },
-  dayBar: {
-    width: '70%',
-    borderRadius: 6,
-    minHeight: 4,
-  },
-  dayName: {
-    fontSize: 9,
-    fontWeight: '700',
-    marginTop: 6,
-  },
+  dayBar: { width: '70%', borderRadius: 6, minHeight: 4 },
+  dayName: { fontSize: 9, fontWeight: '700', marginTop: 6 },
 
-  // INSIGHTS
   insightsSection: { marginBottom: 16 },
   insightBadge: {
     flexDirection: 'row',
@@ -1600,10 +1455,7 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 8,
   },
-  insightBadgeText: {
-    fontSize: 10,
-    fontWeight: '900',
-  },
+  insightBadgeText: { fontSize: 10, fontWeight: '900' },
   insightRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1627,7 +1479,6 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
 
-  // SECTIONS
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1637,14 +1488,9 @@ const styles = StyleSheet.create({
   },
   sectionTitle: { fontSize: 16, fontWeight: '900' },
   sectionHint: { fontSize: 11, fontWeight: '600' },
-  seeAllBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-  },
+  seeAllBtn: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   seeAllText: { fontSize: 12, fontWeight: '800' },
 
-  // STATS GRID
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1669,7 +1515,6 @@ const styles = StyleSheet.create({
   statLabel: { fontSize: 11, fontWeight: '700' },
   statValue: { fontSize: 20, fontWeight: '900', marginTop: 3 },
 
-  // PRO METRICS
   proMetricsCard: {
     borderRadius: 20,
     borderWidth: 1,
@@ -1703,14 +1548,9 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     alignItems: 'flex-end',
   },
-  proMetricLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
+  proMetricLabel: { fontSize: 10, fontWeight: '700', marginBottom: 4 },
   proMetricValue: { fontSize: 16, fontWeight: '900' },
 
-  // CARD
   card: {
     borderRadius: 20,
     padding: 16,
@@ -1732,15 +1572,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  chart: {
-    marginTop: 8,
-    marginLeft: -20,
-    borderRadius: 16,
-  },
-  emptyChart: {
-    alignItems: 'center',
-    paddingVertical: 32,
-  },
+  chart: { marginTop: 8, marginLeft: -20, borderRadius: 16 },
+  emptyChart: { alignItems: 'center', paddingVertical: 32 },
   emptyIconWrap: {
     width: 64,
     height: 64,
@@ -1755,20 +1588,9 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     borderRadius: 12,
   },
-  emptyActionText: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  emptyRecent: {
-    alignItems: 'center',
-    paddingVertical: 24,
-  },
-  emptyTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    marginTop: 10,
-  },
+  emptyActionText: { fontSize: 13, fontWeight: '900', color: '#FFFFFF' },
+  emptyRecent: { alignItems: 'center', paddingVertical: 24 },
+  emptyTitle: { fontSize: 14, fontWeight: '800', marginTop: 10 },
   emptyText: {
     fontSize: 12,
     lineHeight: 20,
@@ -1777,7 +1599,6 @@ const styles = StyleSheet.create({
     maxWidth: 280,
   },
 
-  // TRADE ROW
   tradeRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1796,13 +1617,8 @@ const styles = StyleSheet.create({
   tradePair: { fontSize: 14, fontWeight: '800' },
   tradeMeta: { fontSize: 11, marginTop: 3 },
   tradeResult: { fontSize: 14, fontWeight: '900' },
-  tradeStarsRow: {
-    flexDirection: 'row',
-    gap: 1,
-    marginTop: 4,
-  },
+  tradeStarsRow: { flexDirection: 'row', gap: 1, marginTop: 4 },
 
-  // REGISTER BUTTON
   registerButton: {
     borderRadius: 22,
     overflow: 'hidden',
@@ -1813,11 +1629,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     elevation: 6,
   },
-  registerInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-  },
+  registerInner: { flexDirection: 'row', alignItems: 'center', padding: 16 },
   registerIcon: {
     width: 46,
     height: 46,
@@ -1826,15 +1638,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  registerTextWrap: {
-    flex: 1,
-    marginHorizontal: 13,
-  },
-  registerTitle: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
+  registerTextWrap: { flex: 1, marginHorizontal: 13 },
+  registerTitle: { fontSize: 15, fontWeight: '900', color: '#FFFFFF' },
   registerSubtitle: {
     fontSize: 11,
     marginTop: 3,
