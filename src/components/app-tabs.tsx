@@ -76,12 +76,13 @@ export default function AppTabs() {
         }}
       />
 
+      {/* ✅ فروشگاه حذف شد، جایگزین شد با چارت */}
       <Tabs.Screen
-        name="store"
+        name="chart"
         options={{
-          title: 'فروشگاه',
+          title: 'چارت',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="cart-outline" size={size} color={color} />
+            <Ionicons name="trending-up-outline" size={size} color={color} />
           ),
         }}
       />
@@ -110,7 +111,7 @@ export default function AppTabs() {
       <Tabs.Screen name="subscription" options={{ href: null }} />
       <Tabs.Screen name="account" options={{ href: null }} />
       <Tabs.Screen name="more" options={{ href: null }} />
-      <Tabs.Screen name="campaign" options={{ href: null }} />
+      {/* ✅ کمپین حذف شد */}
       <Tabs.Screen name="user-profile" options={{ href: null }} />
       <Tabs.Screen name="forgot-password" options={{ href: null }} />
       <Tabs.Screen name="reset-password" options={{ href: null }} />

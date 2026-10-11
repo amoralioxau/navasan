@@ -15,6 +15,10 @@ import { LineChart } from 'react-native-chart-kit';
 
 import { useNavasanTheme } from '@/context/theme-context';
 
+// =========================================================
+// TYPES
+// =========================================================
+
 type Trade = {
   id: string;
   date: string;
@@ -30,14 +34,27 @@ type Trade = {
   sleepHours: string;
   followedPlan: boolean;
   notes: string;
+  setup?: string;
+  rating?: number;
 };
 
 const STORAGE_KEY = 'navasan_trades_v1';
 const BALANCE_STORAGE_KEY = 'navasan_account_v1';
+const GOALS_STORAGE_KEY = 'navasan_goals_v1';
 
 const BLUE = '#2563EB';
+const BLUE_LIGHT = '#3B82F6';
+const BLUE_DARK = '#1E40AF';
 const GREEN = '#16A34A';
 const RED = '#DC2626';
+const AMBER = '#D97706';
+const PURPLE = '#7C3AED';
+const CYAN = '#0891B2';
+const GOLD = '#EAB308';
+
+// =========================================================
+// HELPERS
+// =========================================================
 
 const toNumber = (value: string | number) => {
   const n = typeof value === 'number' ? value : Number.parseFloat(value);
@@ -46,31 +63,46 @@ const toNumber = (value: string | number) => {
 
 const getOutcome = (trade: Trade) => {
   const result = toNumber(trade.result);
-
   if (result > 0) return 'win';
   if (result < 0) return 'loss';
-
   return 'be';
 };
 
-const formatMoney = (value: number) => {
+const formatMoney = (value: number, decimals = 2) => {
   const sign = value > 0 ? '+' : value < 0 ? '-' : '';
+  return `${sign}$${Math.abs(value).toFixed(decimals)}`;
+};
 
-  return `${sign}$${Math.abs(value).toFixed(2)}`;
+const formatMoneyShort = (value: number) => {
+  if (Math.abs(value) >= 1000) {
+    return `${value >= 0 ? '+' : '-'}$${(Math.abs(value) / 1000).toFixed(1)}K`;
+  }
+  return formatMoney(value, 0);
 };
 
 const formatDate = (value: string) => {
   const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return 'بدون تاریخ';
-  }
-
-  return date.toLocaleDateString('fa-IR', {
-    month: 'short',
-    day: 'numeric',
-  });
+  if (Number.isNaN(date.getTime())) return 'بدون تاریخ';
+  return date.toLocaleDateString('fa-IR', { month: 'short', day: 'numeric' });
 };
+
+const getGreeting = () => {
+  const hour = new Date().getHours();
+  if (hour < 5) return 'شب بخیر 🌙';
+  if (hour < 12) return 'صبح بخیر ☀️';
+  if (hour < 17) return 'وقت بخیر 🌤️';
+  if (hour < 21) return 'عصر بخیر 🌆';
+  return 'شب بخیر 🌙';
+};
+
+const getDayKey = (dateStr: string) => {
+  const d = new Date(dateStr);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+};
+
+// =========================================================
+// MAIN
+// =========================================================
 
 export default function Dashboard() {
   const { colors, isDark } = useNavasanTheme();
@@ -79,6 +111,9 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [initialBalance, setInitialBalance] = useState<number | null>(null);
+  const [dailyTarget, setDailyTarget] = useState(200);
+  const [dailyMaxLoss, setDailyMaxLoss] = useState(100);
+  const [dailyMaxTrades, setDailyMaxTrades] = useState(5);
 
   const router = useRouter();
 
@@ -88,21 +123,32 @@ export default function Dashboard() {
   const TEXT = colors.text;
   const MUTED = colors.mutedText;
 
+  // =========================================================
+  // LOAD
+  // =========================================================
+
   const loadTrades = useCallback(async () => {
     try {
-      const raw = await AsyncStorage.getItem(STORAGE_KEY);
-      const accountRaw = await AsyncStorage.getItem(BALANCE_STORAGE_KEY);
+      const [raw, accountRaw, goalsRaw] = await Promise.all([
+        AsyncStorage.getItem(STORAGE_KEY),
+        AsyncStorage.getItem(BALANCE_STORAGE_KEY),
+        AsyncStorage.getItem(GOALS_STORAGE_KEY),
+      ]);
 
       if (accountRaw) {
         const account = JSON.parse(accountRaw);
-
         setInitialBalance(
-          typeof account?.initialBalance === 'number'
-            ? account.initialBalance
-            : null,
+          typeof account?.initialBalance === 'number' ? account.initialBalance : null
         );
       } else {
         setInitialBalance(null);
+      }
+
+      if (goalsRaw) {
+        const g = JSON.parse(goalsRaw);
+        if (typeof g?.dailyTargetProfit === 'number') setDailyTarget(g.dailyTargetProfit);
+        if (typeof g?.dailyMaxLoss === 'number') setDailyMaxLoss(g.dailyMaxLoss);
+        if (typeof g?.dailyMaxTrades === 'number') setDailyMaxTrades(g.dailyMaxTrades);
       }
 
       if (!raw) {
@@ -111,7 +157,6 @@ export default function Dashboard() {
       }
 
       const parsed = JSON.parse(raw);
-
       setTrades(Array.isArray(parsed) ? parsed : []);
     } catch {
       setTrades([]);
@@ -127,55 +172,43 @@ export default function Dashboard() {
 
   useEffect(() => {
     const interval = setInterval(loadTrades, 1500);
-
     return () => clearInterval(interval);
   }, [loadTrades]);
 
+  // =========================================================
+  // STATS
+  // =========================================================
+
   const stats = useMemo(() => {
     const total = trades.length;
-
-    const wins = trades.filter(
-      (t) => getOutcome(t) === 'win',
-    ).length;
-
-    const losses = trades.filter(
-      (t) => getOutcome(t) === 'loss',
-    ).length;
-
+    const wins = trades.filter((t) => getOutcome(t) === 'win').length;
+    const losses = trades.filter((t) => getOutcome(t) === 'loss').length;
     const breakevens = total - wins - losses;
 
     const profit = trades.reduce((sum, t) => {
-      const result = toNumber(t.result);
-
-      return result > 0 ? sum + result : sum;
+      const r = toNumber(t.result);
+      return r > 0 ? sum + r : sum;
     }, 0);
 
     const loss = Math.abs(
       trades.reduce((sum, t) => {
-        const result = toNumber(t.result);
-
-        return result < 0 ? sum + result : sum;
-      }, 0),
+        const r = toNumber(t.result);
+        return r < 0 ? sum + r : sum;
+      }, 0)
     );
 
-    const net = trades.reduce(
-      (sum, t) => sum + toNumber(t.result),
-      0,
-    );
+    const net = trades.reduce((sum, t) => sum + toNumber(t.result), 0);
 
     const winRate = total ? (wins / total) * 100 : 0;
+    const profitFactor = loss > 0 ? profit / loss : profit > 0 ? 999 : 0;
 
-    const profitFactor =
-      loss > 0
-        ? profit / loss
-        : profit > 0
-          ? Infinity
-          : 0;
+    const avgWin = wins > 0 ? profit / wins : 0;
+    const avgLoss = losses > 0 ? loss / losses : 0;
+    const expectancy =
+      (winRate / 100) * avgWin - ((100 - winRate) / 100) * avgLoss;
 
     const chronological = [...trades].sort(
-      (a, b) =>
-        new Date(a.date).getTime() -
-        new Date(b.date).getTime(),
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
     );
 
     let equity = 0;
@@ -184,75 +217,77 @@ export default function Dashboard() {
 
     const equityPoints = chronological.map((trade) => {
       equity += toNumber(trade.result);
-
       peak = Math.max(peak, equity);
-
-      maxDrawdown = Math.max(
-        maxDrawdown,
-        peak - equity,
-      );
-
+      maxDrawdown = Math.max(maxDrawdown, peak - equity);
       return equity;
     });
 
-    const currentBalance =
-      (initialBalance ?? 0) + net;
-
+    const currentBalance = (initialBalance ?? 0) + net;
     const balanceChangePercent =
-      initialBalance && initialBalance > 0
-        ? (net / initialBalance) * 100
-        : null;
+      initialBalance && initialBalance > 0 ? (net / initialBalance) * 100 : null;
 
     const todayKey = new Date().toDateString();
-
-    const todayNet = trades.reduce(
-      (sum, t) =>
-        new Date(t.date).toDateString() === todayKey
-          ? sum + toNumber(t.result)
-          : sum,
-      0,
+    const todayTrades = trades.filter(
+      (t) => new Date(t.date).toDateString() === todayKey
     );
+    const todayNet = todayTrades.reduce((s, t) => s + toNumber(t.result), 0);
+    const todayCount = todayTrades.length;
 
-    const sortedResults = chronological.map((t) =>
-      toNumber(t.result),
-    );
-
+    const sortedResults = chronological.map((t) => toNumber(t.result));
     let currentStreak = 0;
-
     if (sortedResults.length) {
       const last = sortedResults[sortedResults.length - 1];
-
       if (last !== 0) {
         const sign = last > 0 ? 1 : -1;
-
-        for (
-          let i = sortedResults.length - 1;
-          i >= 0;
-          i--
-        ) {
+        for (let i = sortedResults.length - 1; i >= 0; i--) {
           if (
             sortedResults[i] === 0 ||
             (sortedResults[i] > 0 ? 1 : -1) !== sign
           ) {
             break;
           }
-
           currentStreak += sign;
         }
       }
     }
 
-    const bestTrade = trades.reduce(
-      (best, t) =>
-        Math.max(best, toNumber(t.result)),
-      0,
-    );
+    const bestTrade = trades.reduce((b, t) => Math.max(b, toNumber(t.result)), 0);
+    const worstTrade = trades.reduce((w, t) => Math.min(w, toNumber(t.result)), 0);
 
-    const worstTrade = trades.reduce(
-      (worst, t) =>
-        Math.min(worst, toNumber(t.result)),
-      0,
-    );
+    // 7 day performance
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+    sevenDaysAgo.setHours(0, 0, 0, 0);
+
+    const last7Days: { day: string; pnl: number }[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const key = d.toDateString();
+      const dayPnl = trades
+        .filter((t) => new Date(t.date).toDateString() === key)
+        .reduce((s, t) => s + toNumber(t.result), 0);
+      last7Days.push({
+        day: d.toLocaleDateString('fa-IR', { weekday: 'short' }),
+        pnl: dayPnl,
+      });
+    }
+
+    // Winning days vs losing days
+    const dayMap: Record<string, number> = {};
+    trades.forEach((t) => {
+      const k = getDayKey(t.date);
+      dayMap[k] = (dayMap[k] || 0) + toNumber(t.result);
+    });
+    const dayValues = Object.values(dayMap);
+    const greenDays = dayValues.filter((v) => v > 0).length;
+    const redDays = dayValues.filter((v) => v < 0).length;
+
+    // Plan adherence
+    const planAdherence =
+      total > 0
+        ? (trades.filter((t) => t.followedPlan).length / total) * 100
+        : 0;
 
     return {
       total,
@@ -260,6 +295,8 @@ export default function Dashboard() {
       losses,
       breakevens,
       net,
+      profit,
+      loss,
       winRate,
       profitFactor,
       maxDrawdown,
@@ -267,69 +304,142 @@ export default function Dashboard() {
       currentBalance,
       balanceChangePercent,
       todayNet,
+      todayCount,
       currentStreak,
       bestTrade,
       worstTrade,
+      last7Days,
+      greenDays,
+      redDays,
+      avgWin,
+      avgLoss,
+      expectancy,
+      planAdherence,
     };
   }, [trades, initialBalance]);
 
   const recentTrades = [...trades]
-    .sort(
-      (a, b) =>
-        new Date(b.date).getTime() -
-        new Date(a.date).getTime(),
-    )
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
     .slice(0, 5);
 
   const chartValues = useMemo(() => {
-    if (initialBalance === null) {
-      return [];
-    }
-
+    if (initialBalance === null) return [];
     return [
       Number(initialBalance.toFixed(2)),
-      ...stats.equityPoints.map((v) =>
-        Number((v + initialBalance).toFixed(2)),
-      ),
+      ...stats.equityPoints.map((v) => Number((v + initialBalance).toFixed(2))),
     ];
   }, [stats.equityPoints, initialBalance]);
 
   const chartLabels = chartValues.map((_, index) =>
-    index === 0 ? 'شروع' : `${index}`,
+    index === 0 ? 'شروع' : `${index}`
   );
+
+  // Daily goal percent
+  const dailyGoalPct = useMemo(() => {
+    if (dailyTarget <= 0) return 0;
+    return Math.min(Math.max((stats.todayNet / dailyTarget) * 100, 0), 100);
+  }, [stats.todayNet, dailyTarget]);
+
+  const dailyLossPct = useMemo(() => {
+    if (dailyMaxLoss <= 0 || stats.todayNet >= 0) return 0;
+    return Math.min((Math.abs(stats.todayNet) / dailyMaxLoss) * 100, 100);
+  }, [stats.todayNet, dailyMaxLoss]);
+
+  // Quick insights
+  const insights = useMemo(() => {
+    const list: { icon: string; text: string; color: string }[] = [];
+
+    if (stats.total === 0) {
+      list.push({
+        icon: 'rocket-outline',
+        text: 'اولین معامله‌ات رو ثبت کن تا تحلیل شروع بشه',
+        color: BLUE,
+      });
+      return list;
+    }
+
+    if (stats.winRate >= 60 && stats.total >= 10) {
+      list.push({
+        icon: 'flame',
+        text: `وین‌ریت ${stats.winRate.toFixed(0)}٪ — داری عالی کار می‌کنی`,
+        color: GREEN,
+      });
+    } else if (stats.winRate < 40 && stats.total >= 10) {
+      list.push({
+        icon: 'alert-circle',
+        text: `وین‌ریت ${stats.winRate.toFixed(0)}٪ — استراتژی رو بازبینی کن`,
+        color: RED,
+      });
+    }
+
+    if (stats.expectancy > 0 && stats.total >= 10) {
+      list.push({
+        icon: 'trending-up',
+        text: `امید ریاضی مثبت: ${formatMoney(stats.expectancy)} در هر معامله`,
+        color: GREEN,
+      });
+    }
+
+    if (stats.currentStreak >= 3) {
+      list.push({
+        icon: 'trophy',
+        text: `${stats.currentStreak} برد پشت سر هم — حواست به tilt باشه`,
+        color: GOLD,
+      });
+    } else if (stats.currentStreak <= -3) {
+      list.push({
+        icon: 'warning',
+        text: `${Math.abs(stats.currentStreak)} باخت پی‌درپی — استراحت کن`,
+        color: RED,
+      });
+    }
+
+    if (stats.planAdherence >= 80 && stats.total >= 10) {
+      list.push({
+        icon: 'shield-checkmark',
+        text: `پایبندی به پلن ${stats.planAdherence.toFixed(0)}٪ — فوق‌العاده`,
+        color: GREEN,
+      });
+    } else if (stats.planAdherence < 50 && stats.total >= 10) {
+      list.push({
+        icon: 'shield-outline',
+        text: 'کمتر از نصف معاملات طبق پلن بوده',
+        color: AMBER,
+      });
+    }
+
+    if (list.length === 0) {
+      list.push({
+        icon: 'sparkles',
+        text: 'داده‌ها دارن جمع می‌شن — بعد از ۱۰ معامله تحلیل عمیق‌تر می‌شی',
+        color: BLUE,
+      });
+    }
+
+    return list.slice(0, 3);
+  }, [stats]);
+
+  // =========================================================
+  // LOADING
+  // =========================================================
 
   if (loading) {
     return (
-      <View
-        style={[
-          styles.loading,
-          { backgroundColor: BG },
-        ]}
-      >
-        <ActivityIndicator
-          size="large"
-          color={BLUE}
-        />
-
-        <Text
-          style={[
-            styles.loadingText,
-            { color: MUTED },
-          ]}
-        >
+      <View style={[styles.loading, { backgroundColor: BG }]}>
+        <ActivityIndicator size="large" color={BLUE} />
+        <Text style={[styles.loadingText, { color: MUTED }]}>
           در حال بارگذاری داشبورد...
         </Text>
       </View>
     );
   }
 
+  // =========================================================
+  // RENDER
+  // =========================================================
+
   return (
-    <View
-      style={[
-        styles.container,
-        { backgroundColor: BG },
-      ]}
-    >
+    <View style={[styles.container, { backgroundColor: BG }]}>
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
@@ -344,17 +454,14 @@ export default function Dashboard() {
           />
         }
       >
+        {/* ================= HEADER ================= */}
         <View style={styles.header}>
           <View>
-            <Text style={styles.brand}>NAVASAN</Text>
-
-            <Text
-              style={[
-                styles.subtitle,
-                { color: MUTED },
-              ]}
-            >
-              داشبورد معاملاتی
+            <Text style={[styles.greeting, { color: MUTED }]}>
+              {getGreeting()}
+            </Text>
+            <Text style={[styles.brand, { color: TEXT }]}>
+              NAVASAN
             </Text>
           </View>
 
@@ -362,308 +469,558 @@ export default function Dashboard() {
             <TouchableOpacity
               style={[
                 styles.iconButton,
-                {
-                  backgroundColor: CARD,
-                  borderColor: BORDER,
-                },
+                { backgroundColor: CARD, borderColor: BORDER },
               ]}
             >
-              <Ionicons
-                name="notifications-outline"
-                size={22}
-                color={TEXT}
-              />
+              <Ionicons name="notifications-outline" size={21} color={TEXT} />
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[
                 styles.iconButton,
-                {
-                  backgroundColor: CARD,
-                  borderColor: BORDER,
-                },
+                { backgroundColor: CARD, borderColor: BORDER },
               ]}
-              onPress={() =>
-                router.push('/account')
-              }
+              onPress={() => router.push('/account')}
             >
-              <Ionicons
-                name="person-outline"
-                size={22}
-                color={TEXT}
-              />
+              <Ionicons name="person-outline" size={21} color={TEXT} />
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[
                 styles.iconButton,
-                {
-                  backgroundColor: CARD,
-                  borderColor: BORDER,
-                },
+                { backgroundColor: CARD, borderColor: BORDER },
               ]}
-              onPress={() =>
-                router.push({
-                  pathname: '/more',
-                } as any)
-              }
+              onPress={() => router.push({ pathname: '/more' } as any)}
             >
-              <Ionicons
-                name="ellipsis-horizontal"
-                size={22}
-                color={TEXT}
-              />
+              <Ionicons name="ellipsis-horizontal" size={21} color={TEXT} />
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* Campaign banner - intentionally unchanged */}
-        <TouchableOpacity
-          style={styles.campaignBanner}
-          activeOpacity={0.9}
-          onPress={() =>
-            router.push('/campaign' as any)
-          }
-        >
-          <View style={styles.campaignIconWrap}>
-            <Ionicons
-              name="trophy"
-              size={26}
-              color="#FFFFFF"
-            />
-          </View>
-
-          <View style={styles.campaignTextWrap}>
-            <View style={styles.campaignBadge}>
-              <Text style={styles.campaignBadgeText}>
-                کمپین ویژه NAVASAN
-              </Text>
-            </View>
-
-            <Text style={styles.campaignTitle}>
-              فرصت دریافت حساب پراپ
-            </Text>
-
-            <Text style={styles.campaignAmount}>
-              $100,000
-            </Text>
-
-            <Text style={styles.campaignSub}>
-              ثبت‌نام با فقط ۱ دلار
-            </Text>
-          </View>
-
-          <Ionicons
-            name="chevron-back"
-            size={22}
-            color="#93C5FD"
+        {/* ================= HERO BALANCE CARD ================= */}
+        <View style={styles.heroWrapper}>
+          {/* Decorative backgrounds */}
+          <View
+            style={[
+              styles.heroBgLayer,
+              { backgroundColor: BLUE, opacity: 1 },
+            ]}
           />
-        </TouchableOpacity>
+          <View
+            style={[
+              styles.heroCircle1,
+              { backgroundColor: BLUE_LIGHT },
+            ]}
+          />
+          <View
+            style={[
+              styles.heroCircle2,
+              { backgroundColor: BLUE_DARK },
+            ]}
+          />
 
-        <View style={styles.balanceCard}>
-          <View style={styles.balanceTop}>
-            <View>
-              <Text style={styles.balanceLabel}>
-                {initialBalance !== null
-                  ? 'موجودی فعلی حساب'
-                  : 'خالص عملکرد معاملات'}
-              </Text>
+          <View style={styles.heroContent}>
+            <View style={styles.heroTop}>
+              <View>
+                <Text style={styles.heroLabel}>
+                  {initialBalance !== null
+                    ? 'موجودی فعلی حساب'
+                    : 'خالص عملکرد معاملات'}
+                </Text>
+                <Text style={styles.heroValue}>
+                  {initialBalance !== null
+                    ? `$${stats.currentBalance.toFixed(2)}`
+                    : formatMoney(stats.net)}
+                </Text>
 
-              <Text style={styles.balanceValue}>
-                {initialBalance !== null
-                  ? `$${stats.currentBalance.toFixed(2)}`
-                  : formatMoney(stats.net)}
-              </Text>
+                {initialBalance !== null && stats.balanceChangePercent !== null && (
+                  <View style={styles.heroChangeRow}>
+                    <Ionicons
+                      name={
+                        stats.balanceChangePercent >= 0
+                          ? 'arrow-up-circle'
+                          : 'arrow-down-circle'
+                      }
+                      size={16}
+                      color="#FFFFFF"
+                    />
+                    <Text style={styles.heroChangeText}>
+                      {stats.balanceChangePercent >= 0 ? '+' : ''}
+                      {stats.balanceChangePercent.toFixed(2)}% از شروع
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              <View style={styles.heroBadge}>
+                <Ionicons
+                  name="trending-up"
+                  size={26}
+                  color="#FFFFFF"
+                />
+              </View>
             </View>
 
-            <View style={styles.blueCircle}>
-              <Ionicons
-                name="trending-up"
-                size={25}
-                color="#FFFFFF"
-              />
-            </View>
-          </View>
-
-          <View style={styles.balanceBottom}>
-            <View>
-              <Text style={styles.balanceMeta}>
-                سرمایه اولیه
-              </Text>
-
-              <Text style={styles.balanceMetaValue}>
-                {initialBalance !== null
-                  ? `$${initialBalance.toFixed(2)}`
-                  : 'ثبت نشده'}
-              </Text>
-            </View>
-
-            <View>
-              <Text style={styles.balanceMeta}>
-                تغییر حساب
-              </Text>
-
-              <Text style={styles.balanceMetaValue}>
-                {initialBalance === null
-                  ? '—'
-                  : formatMoney(stats.net)}
-              </Text>
-
-              <Text style={styles.balanceMetaPercent}>
-                {stats.balanceChangePercent === null
-                  ? ''
-                  : `${stats.balanceChangePercent >= 0 ? '+' : ''}${stats.balanceChangePercent.toFixed(2)}%`}
-              </Text>
-            </View>
-
-            <View>
-              <Text style={styles.balanceMeta}>
-                معاملات
-              </Text>
-
-              <Text style={styles.balanceMetaValue}>
-                {stats.total}
-              </Text>
-            </View>
-
-            <View>
-              <Text style={styles.balanceMeta}>
-                وین‌ریت
-              </Text>
-
-              <Text style={styles.balanceMetaValue}>
-                {stats.winRate.toFixed(1)}%
-              </Text>
-            </View>
-
-            <View>
-              <Text style={styles.balanceMeta}>
-                PF
-              </Text>
-
-              <Text style={styles.balanceMetaValue}>
-                {Number.isFinite(stats.profitFactor)
-                  ? stats.profitFactor.toFixed(2)
-                  : '∞'}
-              </Text>
+            <View style={styles.heroStats}>
+              <View style={styles.heroStatItem}>
+                <Text style={styles.heroStatLabel}>موجودی شروع</Text>
+                <Text style={styles.heroStatValue}>
+                  {initialBalance !== null
+                    ? `$${initialBalance.toFixed(0)}`
+                    : '—'}
+                </Text>
+              </View>
+              <View style={styles.heroStatDivider} />
+              <View style={styles.heroStatItem}>
+                <Text style={styles.heroStatLabel}>معاملات</Text>
+                <Text style={styles.heroStatValue}>{stats.total}</Text>
+              </View>
+              <View style={styles.heroStatDivider} />
+              <View style={styles.heroStatItem}>
+                <Text style={styles.heroStatLabel}>وین‌ریت</Text>
+                <Text style={styles.heroStatValue}>
+                  {stats.winRate.toFixed(1)}%
+                </Text>
+              </View>
             </View>
           </View>
         </View>
 
-        <View style={styles.sectionHeader}>
-          <Text
-            style={[
-              styles.sectionTitle,
-              { color: TEXT },
-            ]}
-          >
-            عملکرد
-          </Text>
+        {/* ================= TODAY PROGRESS ================= */}
+        <View
+          style={[
+            styles.todayCard,
+            { backgroundColor: CARD, borderColor: BORDER },
+          ]}
+        >
+          <View style={styles.todayHeader}>
+            <View style={styles.todayHeaderLeft}>
+              <View
+                style={[
+                  styles.todayIconWrap,
+                  { backgroundColor: `${BLUE}18` },
+                ]}
+              >
+                <Ionicons name="today-outline" size={18} color={BLUE} />
+              </View>
+              <Text style={[styles.todayTitle, { color: TEXT }]}>
+                امروز
+              </Text>
+            </View>
 
-          <Text
-            style={[
-              styles.sectionHint,
-              { color: MUTED },
-            ]}
-          >
-            داده‌های واقعی ژورنال
+            <View style={styles.todayChipRow}>
+              <View
+                style={[
+                  styles.todayChip,
+                  {
+                    backgroundColor:
+                      stats.todayNet >= 0
+                        ? `${GREEN}18`
+                        : `${RED}18`,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.todayChipText,
+                    { color: stats.todayNet >= 0 ? GREEN : RED },
+                  ]}
+                >
+                  {formatMoney(stats.todayNet, 0)}
+                </Text>
+              </View>
+              <View
+                style={[
+                  styles.todayChip,
+                  { backgroundColor: `${PURPLE}18` },
+                ]}
+              >
+                <Text style={[styles.todayChipText, { color: PURPLE }]}>
+                  {stats.todayCount}/{dailyMaxTrades}
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Target Progress */}
+          <View style={styles.progressBlock}>
+            <View style={styles.progressLabels}>
+              <Text style={[styles.progressLabel, { color: MUTED }]}>
+                هدف سود روزانه
+              </Text>
+              <Text style={[styles.progressValue, { color: TEXT }]}>
+                ${dailyTarget}
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.progressTrack,
+                { backgroundColor: colors.input },
+              ]}
+            >
+              <View
+                style={[
+                  styles.progressFill,
+                  {
+                    width: `${dailyGoalPct}%`,
+                    backgroundColor:
+                      dailyGoalPct >= 100 ? GREEN : BLUE,
+                  },
+                ]}
+              />
+            </View>
+            <Text style={[styles.progressHint, { color: MUTED }]}>
+              {dailyGoalPct.toFixed(0)}% از هدف
+            </Text>
+          </View>
+
+          {/* Loss Progress (only if in loss) */}
+          {stats.todayNet < 0 && (
+            <View style={styles.progressBlock}>
+              <View style={styles.progressLabels}>
+                <Text style={[styles.progressLabel, { color: MUTED }]}>
+                  حداکثر ضرر روزانه
+                </Text>
+                <Text style={[styles.progressValue, { color: RED }]}>
+                  ${dailyMaxLoss}
+                </Text>
+              </View>
+              <View
+                style={[
+                  styles.progressTrack,
+                  { backgroundColor: colors.input },
+                ]}
+              >
+                <View
+                  style={[
+                    styles.progressFill,
+                    {
+                      width: `${dailyLossPct}%`,
+                      backgroundColor: dailyLossPct >= 80 ? RED : AMBER,
+                    },
+                  ]}
+                />
+              </View>
+              <Text style={[styles.progressHint, { color: RED }]}>
+                {dailyLossPct.toFixed(0)}% از حد مجاز مصرف شده
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {/* ================= 7-DAY PERFORMANCE ================= */}
+        <View
+          style={[
+            styles.sevenDayCard,
+            { backgroundColor: CARD, borderColor: BORDER },
+          ]}
+        >
+          <View style={styles.sevenDayHeader}>
+            <View>
+              <Text style={[styles.sevenDayTitle, { color: TEXT }]}>
+                عملکرد هفته اخیر
+              </Text>
+              <Text style={[styles.sevenDaySub, { color: MUTED }]}>
+                ۷ روز گذشته
+              </Text>
+            </View>
+
+            <View style={styles.daysCounter}>
+              <View style={styles.dayBadge}>
+                <View
+                  style={[
+                    styles.dayDot,
+                    { backgroundColor: GREEN },
+                  ]}
+                />
+                <Text style={[styles.dayBadgeText, { color: TEXT }]}>
+                  {stats.greenDays}
+                </Text>
+              </View>
+              <View style={styles.dayBadge}>
+                <View
+                  style={[
+                    styles.dayDot,
+                    { backgroundColor: RED },
+                  ]}
+                />
+                <Text style={[styles.dayBadgeText, { color: TEXT }]}>
+                  {stats.redDays}
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.sevenDayBars}>
+            {stats.last7Days.map((d, i) => {
+              const maxAbs = Math.max(
+                ...stats.last7Days.map((x) => Math.abs(x.pnl)),
+                1
+              );
+              const heightPct = (Math.abs(d.pnl) / maxAbs) * 100;
+              const isPositive = d.pnl >= 0;
+              const isEmpty = d.pnl === 0;
+
+              return (
+                <View key={i} style={styles.dayColumn}>
+                  <View style={styles.dayBarContainer}>
+                    <View
+                      style={[
+                        styles.dayBar,
+                        {
+                          height: isEmpty ? 4 : `${heightPct}%`,
+                          backgroundColor: isEmpty
+                            ? colors.input
+                            : isPositive
+                            ? GREEN
+                            : RED,
+                          opacity: isEmpty ? 0.4 : 1,
+                        },
+                      ]}
+                    />
+                  </View>
+                  <Text style={[styles.dayName, { color: MUTED }]}>
+                    {d.day}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* ================= INSIGHTS ================= */}
+        {insights.length > 0 && (
+          <View style={styles.insightsSection}>
+            <View style={styles.sectionHeader}>
+              <Text style={[styles.sectionTitle, { color: TEXT }]}>
+                بینش سریع
+              </Text>
+              <View
+                style={[
+                  styles.insightBadge,
+                  { backgroundColor: `${BLUE}18` },
+                ]}
+              >
+                <Ionicons name="sparkles" size={11} color={BLUE} />
+                <Text style={[styles.insightBadgeText, { color: BLUE }]}>
+                  AI
+                </Text>
+              </View>
+            </View>
+
+            {insights.map((ins, i) => (
+              <View
+                key={i}
+                style={[
+                  styles.insightRow,
+                  { backgroundColor: CARD, borderColor: BORDER },
+                ]}
+              >
+                <View
+                  style={[
+                    styles.insightIconWrap,
+                    { backgroundColor: `${ins.color}18` },
+                  ]}
+                >
+                  <Ionicons
+                    name={ins.icon as any}
+                    size={17}
+                    color={ins.color}
+                  />
+                </View>
+                <Text style={[styles.insightText, { color: TEXT }]}>
+                  {ins.text}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* ================= STATS GRID ================= */}
+        <View style={styles.sectionHeader}>
+          <Text style={[styles.sectionTitle, { color: TEXT }]}>
+            آمار کلیدی
+          </Text>
+          <Text style={[styles.sectionHint, { color: MUTED }]}>
+            {stats.total} معامله
           </Text>
         </View>
 
         <View style={styles.statsGrid}>
           <StatCard
-            icon="trending-up-outline"
-            label="سود خالص"
-            value={formatMoney(stats.net)}
-            valueColor={
-              stats.net >= 0 ? GREEN : RED
-            }
-            cardColor={CARD}
-            borderColor={BORDER}
-            labelColor={MUTED}
-          />
-
-          <StatCard
-            icon="checkmark-circle-outline"
+            icon="checkmark-circle"
             label="برد"
             value={String(stats.wins)}
             valueColor={GREEN}
+            bg={`${GREEN}12`}
+            iconColor={GREEN}
             cardColor={CARD}
             borderColor={BORDER}
             labelColor={MUTED}
           />
-
           <StatCard
-            icon="close-circle-outline"
+            icon="close-circle"
             label="باخت"
             value={String(stats.losses)}
             valueColor={RED}
+            bg={`${RED}12`}
+            iconColor={RED}
             cardColor={CARD}
             borderColor={BORDER}
             labelColor={MUTED}
           />
-
           <StatCard
-            icon="remove-circle-outline"
-            label="سر‌به‌سر"
-            value={String(stats.breakevens)}
-            valueColor={MUTED}
+            icon="analytics"
+            label="PF"
+            value={
+              Number.isFinite(stats.profitFactor)
+                ? stats.profitFactor.toFixed(2)
+                : '∞'
+            }
+            valueColor={PURPLE}
+            bg={`${PURPLE}12`}
+            iconColor={PURPLE}
+            cardColor={CARD}
+            borderColor={BORDER}
+            labelColor={MUTED}
+          />
+          <StatCard
+            icon="flash"
+            label="روند"
+            value={
+              stats.currentStreak > 0
+                ? `${stats.currentStreak}W`
+                : stats.currentStreak < 0
+                ? `${Math.abs(stats.currentStreak)}L`
+                : '—'
+            }
+            valueColor={
+              stats.currentStreak > 0
+                ? GREEN
+                : stats.currentStreak < 0
+                ? RED
+                : MUTED
+            }
+            bg={`${
+              stats.currentStreak > 0
+                ? GREEN
+                : stats.currentStreak < 0
+                ? RED
+                : BLUE
+            }12`}
+            iconColor={
+              stats.currentStreak > 0
+                ? GREEN
+                : stats.currentStreak < 0
+                ? RED
+                : BLUE
+            }
             cardColor={CARD}
             borderColor={BORDER}
             labelColor={MUTED}
           />
         </View>
 
+        {/* ================= PROFESSIONAL METRICS ================= */}
+        {stats.total >= 5 && (
+          <View
+            style={[
+              styles.proMetricsCard,
+              { backgroundColor: CARD, borderColor: BORDER },
+            ]}
+          >
+            <View style={styles.proMetricsHeader}>
+              <View
+                style={[
+                  styles.proMetricsIcon,
+                  { backgroundColor: `${GOLD}18` },
+                ]}
+              >
+                <Ionicons name="diamond" size={18} color={GOLD} />
+              </View>
+              <Text style={[styles.proMetricsTitle, { color: TEXT }]}>
+                متریک‌های حرفه‌ای
+              </Text>
+            </View>
+
+            <View style={styles.proMetricsGrid}>
+              <ProMetric
+                label="Expectancy"
+                value={formatMoney(stats.expectancy)}
+                color={stats.expectancy >= 0 ? GREEN : RED}
+                bg={CARD}
+                border={BORDER}
+                mutedColor={MUTED}
+                textColor={TEXT}
+              />
+              <ProMetric
+                label="Avg Win"
+                value={formatMoney(stats.avgWin)}
+                color={GREEN}
+                bg={CARD}
+                border={BORDER}
+                mutedColor={MUTED}
+                textColor={TEXT}
+              />
+              <ProMetric
+                label="Avg Loss"
+                value={formatMoney(-stats.avgLoss)}
+                color={RED}
+                bg={CARD}
+                border={BORDER}
+                mutedColor={MUTED}
+                textColor={TEXT}
+              />
+              <ProMetric
+                label="Max DD"
+                value={formatMoney(-stats.maxDrawdown, 0)}
+                color={RED}
+                bg={CARD}
+                border={BORDER}
+                mutedColor={MUTED}
+                textColor={TEXT}
+              />
+            </View>
+          </View>
+        )}
+
+        {/* ================= EQUITY CHART ================= */}
         <View
           style={[
             styles.card,
-            {
-              backgroundColor: CARD,
-              borderColor: BORDER,
-            },
+            { backgroundColor: CARD, borderColor: BORDER },
           ]}
         >
           <View style={styles.cardHeader}>
             <View>
-              <Text
-                style={[
-                  styles.cardTitle,
-                  { color: TEXT },
-                ]}
-              >
-                Equity Curve
+              <Text style={[styles.cardTitle, { color: TEXT }]}>
+                منحنی سرمایه
               </Text>
-
-              <Text
-                style={[
-                  styles.cardSubtitle,
-                  { color: MUTED },
-                ]}
-              >
-                روند خالص معاملات
+              <Text style={[styles.cardSubtitle, { color: MUTED }]}>
+                {chartValues.length > 1
+                  ? `${chartValues.length - 1} نقطه داده`
+                  : 'منتظر معاملات'}
               </Text>
             </View>
-
-            <Ionicons
-              name="analytics-outline"
-              size={22}
-              color={BLUE}
-            />
+            <View
+              style={[
+                styles.chartIconWrap,
+                { backgroundColor: `${BLUE}18` },
+              ]}
+            >
+              <Ionicons name="analytics-outline" size={20} color={BLUE} />
+            </View>
           </View>
 
-          {initialBalance !== null ? (
+          {initialBalance !== null && chartValues.length > 1 ? (
             <LineChart
               data={{
                 labels: chartLabels,
-                datasets: [
-                  {
-                    data: chartValues,
-                  },
-                ],
+                datasets: [{ data: chartValues }],
               }}
               width={340}
               height={205}
-              withDots
+              withDots={chartValues.length < 20}
               withInnerLines={false}
               withOuterLines={false}
               fromZero={false}
@@ -673,11 +1030,10 @@ export default function Dashboard() {
                 backgroundGradientFrom: CARD,
                 backgroundGradientTo: CARD,
                 decimalPlaces: 0,
-                color: (opacity = 1) =>
-                  `rgba(37, 99, 235, ${opacity})`,
+                color: (opacity = 1) => `rgba(37, 99, 235, ${opacity})`,
                 labelColor: (opacity = 1) =>
                   isDark
-                    ? `rgba(203, 213, 225, ${opacity})`
+                    ? `rgba(148, 163, 184, ${opacity})`
                     : `rgba(100, 116, 139, ${opacity})`,
                 propsForDots: {
                   r: '4',
@@ -690,59 +1046,42 @@ export default function Dashboard() {
             />
           ) : (
             <View style={styles.emptyChart}>
-              <Ionicons
-                name="bar-chart-outline"
-                size={36}
-                color={MUTED}
-              />
-
-              <Text
+              <View
                 style={[
-                  styles.emptyTitle,
-                  { color: TEXT },
+                  styles.emptyIconWrap,
+                  { backgroundColor: `${BLUE}12` },
                 ]}
               >
+                <Ionicons
+                  name="bar-chart-outline"
+                  size={32}
+                  color={BLUE}
+                />
+              </View>
+              <Text style={[styles.emptyTitle, { color: TEXT }]}>
                 {initialBalance === null
                   ? 'سرمایه اولیه ثبت نشده'
                   : 'هنوز معامله‌ای ثبت نشده'}
               </Text>
-
-              <Text
-                style={[
-                  styles.emptyText,
-                  { color: MUTED },
-                ]}
-              >
+              <Text style={[styles.emptyText, { color: MUTED }]}>
                 {initialBalance === null
-                  ? 'ابتدا سرمایه اولیه حساب را در ژورنال ثبت کن تا نمودار از همان نقطه شروع شود.'
-                  : 'اولین معامله را در ژورنال ثبت کن تا نمودار عملکرد ساخته شود.'}
+                  ? 'سرمایه اولیه رو در ژورنال ثبت کن تا نمودار از همون‌جا شروع بشه.'
+                  : 'اولین معامله رو در ژورنال ثبت کن تا منحنی رشد بسازه.'}
               </Text>
-
               {initialBalance === null && (
                 <TouchableOpacity
                   style={[
                     styles.emptyAction,
-                    {
-                      backgroundColor:
-                        colors.primarySoft,
-                      borderColor: colors.border,
-                    },
+                    { backgroundColor: BLUE },
                   ]}
                   onPress={() =>
                     router.push({
                       pathname: '/',
-                      params: {
-                        openBalance: '1',
-                      },
+                      params: { openBalance: '1' },
                     })
                   }
                 >
-                  <Text
-                    style={[
-                      styles.emptyActionText,
-                      { color: BLUE },
-                    ]}
-                  >
+                  <Text style={styles.emptyActionText}>
                     ثبت سرمایه اولیه
                   </Text>
                 </TouchableOpacity>
@@ -751,67 +1090,52 @@ export default function Dashboard() {
           )}
         </View>
 
+        {/* ================= RECENT TRADES ================= */}
         <View style={styles.sectionHeader}>
-          <Text
-            style={[
-              styles.sectionTitle,
-              { color: TEXT },
-            ]}
-          >
+          <Text style={[styles.sectionTitle, { color: TEXT }]}>
             معاملات اخیر
           </Text>
-
-          <Text
-            style={[
-              styles.sectionHint,
-              { color: MUTED },
-            ]}
+          <TouchableOpacity
+            onPress={() => router.push('/' as any)}
+            style={styles.seeAllBtn}
           >
-            آخرین ۵ معامله
-          </Text>
+            <Text style={[styles.seeAllText, { color: BLUE }]}>
+              مشاهده همه
+            </Text>
+            <Ionicons name="chevron-forward" size={14} color={BLUE} />
+          </TouchableOpacity>
         </View>
 
         <View
           style={[
             styles.card,
-            {
-              backgroundColor: CARD,
-              borderColor: BORDER,
-            },
+            { backgroundColor: CARD, borderColor: BORDER },
           ]}
         >
           {recentTrades.length === 0 ? (
             <View style={styles.emptyRecent}>
-              <Ionicons
-                name="book-outline"
-                size={36}
-                color={MUTED}
-              />
-
-              <Text
+              <View
                 style={[
-                  styles.emptyTitle,
-                  { color: TEXT },
+                  styles.emptyIconWrap,
+                  { backgroundColor: `${BLUE}12` },
                 ]}
               >
-                ژورنال هنوز خالی است
+                <Ionicons
+                  name="book-outline"
+                  size={32}
+                  color={BLUE}
+                />
+              </View>
+              <Text style={[styles.emptyTitle, { color: TEXT }]}>
+                ژورنال هنوز خالیه
               </Text>
-
-              <Text
-                style={[
-                  styles.emptyText,
-                  { color: MUTED },
-                ]}
-              >
-                معامله‌ها را از بخش ژورنال ثبت کن؛ این قسمت خودکار به‌روزرسانی می‌شود.
+              <Text style={[styles.emptyText, { color: MUTED }]}>
+                از بخش ژورنال اولین معامله‌ات رو ثبت کن.
               </Text>
             </View>
           ) : (
             recentTrades.map((trade, index) => {
-              const result = toNumber(
-                trade.result,
-              );
-
+              const result = toNumber(trade.result);
               const win = result > 0;
               const loss = result < 0;
 
@@ -820,21 +1144,19 @@ export default function Dashboard() {
                   key={trade.id}
                   style={[
                     styles.tradeRow,
-                    {
-                      borderBottomColor:
-                        colors.divider,
-                    },
-                    index ===
-                      recentTrades.length - 1 &&
-                      styles.lastTradeRow,
+                    { borderBottomColor: colors.divider },
+                    index === recentTrades.length - 1 && styles.lastTradeRow,
                   ]}
                 >
                   <View
                     style={[
                       styles.tradeIcon,
                       {
-                        backgroundColor:
-                          colors.cardSecondary,
+                        backgroundColor: win
+                          ? `${GREEN}18`
+                          : loss
+                          ? `${RED}18`
+                          : `${MUTED}18`,
                       },
                     ]}
                   >
@@ -843,210 +1165,79 @@ export default function Dashboard() {
                         win
                           ? 'arrow-up'
                           : loss
-                            ? 'arrow-down'
-                            : 'remove'
+                          ? 'arrow-down'
+                          : 'remove'
                       }
                       size={17}
-                      color={
-                        win
-                          ? GREEN
-                          : loss
-                            ? RED
-                            : MUTED
-                      }
+                      color={win ? GREEN : loss ? RED : MUTED}
                     />
                   </View>
 
                   <View style={styles.tradeInfo}>
-                    <Text
-                      style={[
-                        styles.tradePair,
-                        { color: TEXT },
-                      ]}
-                    >
+                    <Text style={[styles.tradePair, { color: TEXT }]}>
                       {trade.pair || 'نامشخص'}
                     </Text>
-
-                    <Text
-                      style={[
-                        styles.tradeMeta,
-                        { color: MUTED },
-                      ]}
-                    >
-                      {trade.direction === 'buy'
-                        ? 'BUY'
-                        : 'SELL'}{' '}
-                      • {formatDate(trade.date)}
+                    <Text style={[styles.tradeMeta, { color: MUTED }]}>
+                      {trade.direction === 'buy' ? 'BUY' : 'SELL'} •{' '}
+                      {formatDate(trade.date)}
                     </Text>
                   </View>
 
-                  <Text
-                    style={[
-                      styles.tradeResult,
-                      {
-                        color: win
-                          ? GREEN
-                          : loss
-                            ? RED
-                            : MUTED,
-                      },
-                    ]}
-                  >
-                    {formatMoney(result)}
-                  </Text>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text
+                      style={[
+                        styles.tradeResult,
+                        { color: win ? GREEN : loss ? RED : MUTED },
+                      ]}
+                    >
+                      {formatMoney(result, 0)}
+                    </Text>
+                    {trade.rating ? (
+                      <View style={styles.tradeStarsRow}>
+                        {[1, 2, 3, 4, 5].map((s) => (
+                          <Ionicons
+                            key={s}
+                            name={s <= trade.rating! ? 'star' : 'star-outline'}
+                            size={8}
+                            color={GOLD}
+                          />
+                        ))}
+                      </View>
+                    ) : null}
+                  </View>
                 </View>
               );
             })
           )}
         </View>
 
-        <View style={styles.twoCards}>
-          <MiniMetric
-            icon="warning-outline"
-            label="Max Drawdown"
-            value={formatMoney(
-              -stats.maxDrawdown,
-            )}
-            color={
-              stats.maxDrawdown > 0
-                ? RED
-                : GREEN
-            }
-            cardColor={CARD}
-            borderColor={BORDER}
-            labelColor={MUTED}
-          />
-
-          <MiniMetric
-            icon="trophy-outline"
-            label="Win Rate"
-            value={`${stats.winRate.toFixed(1)}%`}
-            color={BLUE}
-            cardColor={CARD}
-            borderColor={BORDER}
-            labelColor={MUTED}
-          />
-        </View>
-
-        <View style={styles.statsGrid}>
-          <StatCard
-            icon="calendar-outline"
-            label="امروز"
-            value={formatMoney(
-              stats.todayNet,
-            )}
-            valueColor={
-              stats.todayNet >= 0
-                ? GREEN
-                : RED
-            }
-            cardColor={CARD}
-            borderColor={BORDER}
-            labelColor={MUTED}
-          />
-
-          <StatCard
-            icon="ribbon-outline"
-            label="بهترین معامله"
-            value={formatMoney(
-              stats.bestTrade,
-            )}
-            valueColor={GREEN}
-            cardColor={CARD}
-            borderColor={BORDER}
-            labelColor={MUTED}
-          />
-
-          <StatCard
-            icon="trending-down-outline"
-            label="بدترین معامله"
-            value={formatMoney(
-              stats.worstTrade,
-            )}
-            valueColor={
-              stats.worstTrade < 0
-                ? RED
-                : MUTED
-            }
-            cardColor={CARD}
-            borderColor={BORDER}
-            labelColor={MUTED}
-          />
-
-          <StatCard
-            icon="flash-outline"
-            label="روند اخیر"
-            value={
-              stats.currentStreak > 0
-                ? `${stats.currentStreak} برد`
-                : stats.currentStreak < 0
-                  ? `${Math.abs(stats.currentStreak)} باخت`
-                  : '—'
-            }
-            valueColor={
-              stats.currentStreak > 0
-                ? GREEN
-                : stats.currentStreak < 0
-                  ? RED
-                  : MUTED
-            }
-            cardColor={CARD}
-            borderColor={BORDER}
-            labelColor={MUTED}
-          />
-        </View>
-
+        {/* ================= REGISTER BUTTON ================= */}
         <TouchableOpacity
-          style={[
-            styles.registerButton,
-            {
-              backgroundColor:
-                colors.primarySoft,
-              borderColor: colors.border,
-            },
-          ]}
+          style={styles.registerButton}
+          activeOpacity={0.9}
           onPress={() =>
             router.push({
               pathname: '/',
-              params: {
-                openTrade: '1',
-              },
+              params: { openTrade: '1' },
             })
           }
         >
-          <View style={styles.registerIcon}>
-            <Ionicons
-              name="add"
-              size={25}
-              color="#FFFFFF"
-            />
+          <View style={styles.registerInner}>
+            <View style={styles.registerIcon}>
+              <Ionicons name="add" size={26} color="#FFFFFF" />
+            </View>
+
+            <View style={styles.registerTextWrap}>
+              <Text style={styles.registerTitle}>
+                ثبت معامله جدید
+              </Text>
+              <Text style={styles.registerSubtitle}>
+                معامله بعدی رو در ژورنال ثبت کن
+              </Text>
+            </View>
+
+            <Ionicons name="chevron-back" size={22} color="#FFFFFF" />
           </View>
-
-          <View style={styles.registerTextWrap}>
-            <Text
-              style={[
-                styles.registerTitle,
-                { color: TEXT },
-              ]}
-            >
-              ثبت معامله جدید
-            </Text>
-
-            <Text
-              style={[
-                styles.registerSubtitle,
-                { color: MUTED },
-              ]}
-            >
-              معامله بعدی را در ژورنال ثبت کن
-            </Text>
-          </View>
-
-          <Ionicons
-            name="chevron-back"
-            size={22}
-            color={BLUE}
-          />
         </TouchableOpacity>
 
         <View style={{ height: 110 }} />
@@ -1055,21 +1246,27 @@ export default function Dashboard() {
   );
 }
 
+// =========================================================
+// STAT CARD
+// =========================================================
+
 function StatCard({
   icon,
   label,
   value,
   valueColor,
+  bg,
+  iconColor,
   cardColor,
   borderColor,
   labelColor,
 }: {
-  icon: React.ComponentProps<
-    typeof Ionicons
-  >['name'];
+  icon: React.ComponentProps<typeof Ionicons>['name'];
   label: string;
   value: string;
   valueColor: string;
+  bg: string;
+  iconColor: string;
   cardColor: string;
   borderColor: string;
   labelColor: string;
@@ -1084,11 +1281,9 @@ function StatCard({
         },
       ]}
     >
-      <Ionicons
-        name={icon}
-        size={21}
-        color={BLUE}
-      />
+      <View style={[styles.statIconWrap, { backgroundColor: bg }]}>
+        <Ionicons name={icon} size={18} color={iconColor} />
+      </View>
 
       <Text
         style={[
@@ -1111,367 +1306,469 @@ function StatCard({
   );
 }
 
-function MiniMetric({
-  icon,
+// =========================================================
+// PRO METRIC
+// =========================================================
+
+function ProMetric({
   label,
   value,
   color,
-  cardColor,
-  borderColor,
-  labelColor,
+  bg,
+  border,
+  mutedColor,
+  textColor,
 }: {
-  icon: React.ComponentProps<
-    typeof Ionicons
-  >['name'];
   label: string;
   value: string;
   color: string;
-  cardColor: string;
-  borderColor: string;
-  labelColor: string;
+  bg: string;
+  border: string;
+  mutedColor: string;
+  textColor: string;
 }) {
   return (
     <View
       style={[
-        styles.miniCard,
-        {
-          backgroundColor: cardColor,
-          borderColor,
-        },
+        styles.proMetricItem,
+        { backgroundColor: bg, borderColor: border },
       ]}
     >
-      <Ionicons
-        name={icon}
-        size={20}
-        color={color}
-      />
-
-      <Text
-        style={[
-          styles.miniLabel,
-          { color: labelColor },
-        ]}
-      >
+      <Text style={[styles.proMetricLabel, { color: mutedColor }]}>
         {label}
       </Text>
-
-      <Text
-        style={[
-          styles.miniValue,
-          { color },
-        ]}
-      >
-        {value}
-      </Text>
+      <Text style={[styles.proMetricValue, { color }]}>{value}</Text>
     </View>
   );
 }
 
+// =========================================================
+// STYLES
+// =========================================================
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
+  container: { flex: 1 },
+  content: { padding: 20, paddingTop: 56, paddingBottom: 20 },
+  loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  loadingText: { marginTop: 12, fontSize: 14, fontWeight: '600' },
 
-  content: {
-    padding: 20,
-    paddingTop: 56,
-  },
-
-  loading: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  loadingText: {
-    marginTop: 12,
-    fontSize: 14,
-    fontWeight: '600',
-  },
-
+  // HEADER
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 18,
+    marginBottom: 20,
   },
-
+  greeting: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
   brand: {
-    fontSize: 25,
+    fontSize: 24,
     fontWeight: '900',
-    color: BLUE,
     letterSpacing: 1.2,
   },
-
-  subtitle: {
-    marginTop: 3,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-
-  headerActions: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-
+  headerActions: { flexDirection: 'row', gap: 8 },
   iconButton: {
-    width: 43,
-    height: 43,
+    width: 42,
+    height: 42,
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
   },
 
-  /*
-   * Campaign banner intentionally kept exactly as provided.
-   */
-  campaignBanner: {
-    flexDirection: 'row-reverse',
-    alignItems: 'center',
-    backgroundColor: '#0F172A',
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: '#1E3A8A',
-    padding: 16,
-    marginBottom: 20,
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.18,
-    shadowRadius: 14,
-    shadowOffset: {
-      width: 0,
-      height: 6,
-    },
-    elevation: 4,
+  // HERO
+  heroWrapper: {
+    borderRadius: 26,
+    marginBottom: 18,
+    overflow: 'hidden',
+    position: 'relative',
+    shadowColor: BLUE,
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 8,
   },
-
-  campaignIconWrap: {
-    width: 54,
-    height: 54,
+    heroBgLayer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  heroCircle1: {
+    position: 'absolute',
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    top: -80,
+    right: -60,
+    opacity: 0.35,
+  },
+  heroCircle2: {
+    position: 'absolute',
+    width: 160,
+    height: 160,
+    borderRadius: 80,
+    bottom: -60,
+    left: -50,
+    opacity: 0.3,
+  },
+  heroContent: {
+    padding: 22,
+    position: 'relative',
+    zIndex: 2,
+  },
+  heroTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  heroLabel: {
+    color: '#DBEAFE',
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  heroValue: {
+    color: '#FFFFFF',
+    fontSize: 32,
+    fontWeight: '900',
+    letterSpacing: -0.5,
+  },
+  heroChangeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 8,
+  },
+  heroChangeText: {
+    color: '#DBEAFE',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  heroBadge: {
+    width: 52,
+    height: 52,
     borderRadius: 18,
-    backgroundColor: '#F59E0B',
+    backgroundColor: 'rgba(255,255,255,0.18)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-
-  campaignTextWrap: {
-    flex: 1,
-    marginHorizontal: 12,
-    alignItems: 'flex-end',
+  heroStats: {
+    flexDirection: 'row',
+    marginTop: 22,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
   },
-
-  campaignBadge: {
-    backgroundColor: 'rgba(37,99,235,0.35)',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    marginBottom: 6,
+  heroStatItem: { flex: 1, alignItems: 'center' },
+  heroStatDivider: {
+    width: 1,
+    height: 28,
+    backgroundColor: 'rgba(255,255,255,0.18)',
   },
-
-  campaignBadgeText: {
+  heroStatLabel: {
     color: '#BFDBFE',
     fontSize: 10,
-    fontWeight: '800',
+    fontWeight: '700',
+    marginBottom: 4,
   },
-
-  campaignTitle: {
+  heroStatValue: {
     color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '900',
-    textAlign: 'right',
   },
 
-  campaignAmount: {
-    color: '#FBBF24',
-    fontSize: 22,
-    fontWeight: '900',
-    marginTop: 2,
-    letterSpacing: 0.5,
+  // TODAY CARD
+  todayCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    padding: 16,
+    marginBottom: 16,
   },
-
-  campaignSub: {
-    color: '#94A3B8',
-    fontSize: 11,
-    marginTop: 2,
-    textAlign: 'right',
-  },
-
-  balanceCard: {
-    backgroundColor: BLUE,
-    borderRadius: 24,
-    padding: 20,
-    marginBottom: 22,
-    shadowColor: BLUE,
-    shadowOpacity: 0.2,
-    shadowRadius: 16,
-    shadowOffset: {
-      width: 0,
-      height: 8,
-    },
-    elevation: 5,
-  },
-
-  balanceTop: {
+  todayHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 14,
   },
-
-  balanceLabel: {
-    color: '#DBEAFE',
-    fontSize: 13,
-    fontWeight: '700',
+  todayHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
-
-  balanceValue: {
-    color: '#FFFFFF',
-    fontSize: 29,
-    fontWeight: '900',
-    marginTop: 5,
-  },
-
-  blueCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.16)',
+  todayIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
-
-  balanceBottom: {
+  todayTitle: {
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  todayChipRow: { flexDirection: 'row', gap: 6 },
+  todayChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
+  },
+  todayChipText: {
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  progressBlock: { marginBottom: 12 },
+  progressLabels: {
     flexDirection: 'row',
-    marginTop: 22,
-    paddingTop: 15,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.2)',
     justifyContent: 'space-between',
+    marginBottom: 7,
+  },
+  progressLabel: { fontSize: 11, fontWeight: '700' },
+  progressValue: { fontSize: 12, fontWeight: '900' },
+  progressTrack: {
+    height: 8,
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  progressFill: { height: '100%', borderRadius: 4 },
+  progressHint: { fontSize: 10, fontWeight: '600', marginTop: 5 },
+
+  // SEVEN DAY
+  sevenDayCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    padding: 16,
+    marginBottom: 16,
+  },
+  sevenDayHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  sevenDayTitle: { fontSize: 15, fontWeight: '900' },
+  sevenDaySub: { fontSize: 10, fontWeight: '600', marginTop: 2 },
+  daysCounter: { flexDirection: 'row', gap: 8 },
+  dayBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  dayDot: { width: 7, height: 7, borderRadius: 4 },
+  dayBadgeText: { fontSize: 11, fontWeight: '900' },
+  sevenDayBars: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    height: 90,
+    gap: 5,
+  },
+  dayColumn: { flex: 1, alignItems: 'center' },
+  dayBarContainer: {
+    flex: 1,
+    width: '100%',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+  },
+  dayBar: {
+    width: '70%',
+    borderRadius: 6,
+    minHeight: 4,
+  },
+  dayName: {
+    fontSize: 9,
+    fontWeight: '700',
+    marginTop: 6,
   },
 
-  balanceMeta: {
-    color: '#BFDBFE',
-    fontSize: 11,
-    fontWeight: '600',
+  // INSIGHTS
+  insightsSection: { marginBottom: 16 },
+  insightBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
   },
-
-  balanceMetaValue: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '800',
-    marginTop: 3,
-  },
-
-  balanceMetaPercent: {
-    color: '#DBEAFE',
+  insightBadgeText: {
     fontSize: 10,
-    fontWeight: '800',
-    marginTop: 1,
+    fontWeight: '900',
+  },
+  insightRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 12,
+    marginBottom: 8,
+    gap: 11,
+  },
+  insightIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  insightText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 19,
   },
 
+  // SECTIONS
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 11,
-    marginTop: 2,
+    marginTop: 4,
   },
-
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '900',
+  sectionTitle: { fontSize: 16, fontWeight: '900' },
+  sectionHint: { fontSize: 11, fontWeight: '600' },
+  seeAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
   },
+  seeAllText: { fontSize: 12, fontWeight: '800' },
 
-  sectionHint: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-
+  // STATS GRID
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
-    marginBottom: 14,
+    marginBottom: 8,
   },
-
   statCard: {
     width: '48.3%',
-    borderRadius: 18,
-    padding: 15,
+    borderRadius: 16,
+    padding: 13,
     marginBottom: 10,
     borderWidth: 1,
   },
-
-  statLabel: {
-    fontSize: 12,
-    marginTop: 9,
-    fontWeight: '600',
+  statIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
   },
+  statLabel: { fontSize: 11, fontWeight: '700' },
+  statValue: { fontSize: 20, fontWeight: '900', marginTop: 3 },
 
-  statValue: {
-    fontSize: 21,
-    fontWeight: '900',
-    marginTop: 4,
+  // PRO METRICS
+  proMetricsCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    padding: 16,
+    marginBottom: 18,
   },
+  proMetricsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 14,
+  },
+  proMetricsIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  proMetricsTitle: { fontSize: 15, fontWeight: '900' },
+  proMetricsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  proMetricItem: {
+    width: '48.3%',
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 11,
+    marginBottom: 8,
+    alignItems: 'flex-end',
+  },
+  proMetricLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  proMetricValue: { fontSize: 16, fontWeight: '900' },
 
+  // CARD
   card: {
     borderRadius: 20,
     padding: 16,
     borderWidth: 1,
-    marginBottom: 20,
+    marginBottom: 18,
   },
-
   cardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 5,
+    marginBottom: 8,
   },
-
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: '900',
+  cardTitle: { fontSize: 16, fontWeight: '900' },
+  cardSubtitle: { fontSize: 11, marginTop: 3 },
+  chartIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-
-  cardSubtitle: {
-    fontSize: 11,
-    marginTop: 3,
-  },
-
   chart: {
     marginTop: 8,
     marginLeft: -20,
     borderRadius: 16,
   },
-
   emptyChart: {
     alignItems: 'center',
-    paddingVertical: 35,
+    paddingVertical: 32,
   },
-
+  emptyIconWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
   emptyAction: {
-    marginTop: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    marginTop: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
     borderRadius: 12,
-    borderWidth: 1,
   },
-
   emptyActionText: {
     fontSize: 13,
     fontWeight: '900',
+    color: '#FFFFFF',
   },
-
   emptyRecent: {
     alignItems: 'center',
-    paddingVertical: 25,
+    paddingVertical: 24,
   },
-
   emptyTitle: {
     fontSize: 14,
     fontWeight: '800',
     marginTop: 10,
   },
-
   emptyText: {
     fontSize: 12,
     lineHeight: 20,
@@ -1480,99 +1777,68 @@ const styles = StyleSheet.create({
     maxWidth: 280,
   },
 
+  // TRADE ROW
   tradeRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 13,
     borderBottomWidth: 1,
   },
-
-  lastTradeRow: {
-    borderBottomWidth: 0,
-  },
-
+  lastTradeRow: { borderBottomWidth: 0 },
   tradeIcon: {
-    width: 37,
-    height: 37,
+    width: 38,
+    height: 38,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
-
-  tradeInfo: {
-    flex: 1,
-    marginLeft: 11,
-  },
-
-  tradePair: {
-    fontSize: 14,
-    fontWeight: '800',
-  },
-
-  tradeMeta: {
-    fontSize: 11,
-    marginTop: 3,
-  },
-
-  tradeResult: {
-    fontSize: 14,
-    fontWeight: '900',
-  },
-
-  twoCards: {
+  tradeInfo: { flex: 1, marginLeft: 11 },
+  tradePair: { fontSize: 14, fontWeight: '800' },
+  tradeMeta: { fontSize: 11, marginTop: 3 },
+  tradeResult: { fontSize: 14, fontWeight: '900' },
+  tradeStarsRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 15,
+    gap: 1,
+    marginTop: 4,
   },
 
-  miniCard: {
-    width: '48.3%',
-    borderRadius: 18,
-    borderWidth: 1,
-    padding: 15,
-  },
-
-  miniLabel: {
-    fontSize: 11,
-    marginTop: 8,
-    fontWeight: '600',
-  },
-
-  miniValue: {
-    fontSize: 18,
-    fontWeight: '900',
-    marginTop: 3,
-  },
-
+  // REGISTER BUTTON
   registerButton: {
-    borderRadius: 19,
-    borderWidth: 1,
-    padding: 14,
+    borderRadius: 22,
+    overflow: 'hidden',
+    backgroundColor: BLUE,
+    shadowColor: BLUE,
+    shadowOpacity: 0.35,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
+  },
+  registerInner: {
     flexDirection: 'row',
     alignItems: 'center',
+    padding: 16,
   },
-
   registerIcon: {
-    width: 43,
-    height: 43,
-    borderRadius: 14,
-    backgroundColor: BLUE,
+    width: 46,
+    height: 46,
+    borderRadius: 15,
+    backgroundColor: 'rgba(255,255,255,0.22)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-
   registerTextWrap: {
     flex: 1,
-    marginHorizontal: 11,
+    marginHorizontal: 13,
   },
-
   registerTitle: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '900',
+    color: '#FFFFFF',
   },
-
   registerSubtitle: {
     fontSize: 11,
     marginTop: 3,
+    color: '#DBEAFE',
+    fontWeight: '600',
   },
 });
