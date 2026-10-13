@@ -14,15 +14,15 @@ import {
 import { WebView } from 'react-native-webview';
 
 import { useNavasanTheme } from '@/context/theme-context';
-import {
-    fetchCandles,
-    type Candle,
-    type Timeframe
-} from '@/lib/market-data';
+import { fetchCandles, type Candle, type Timeframe } from '@/lib/market-data';
 
 const BLUE = '#2563EB';
 const GREEN = '#16A34A';
 const RED = '#DC2626';
+const AMBER = '#F59E0B';
+const PURPLE = '#7C3AED';
+const CYAN = '#0891B2';
+const PINK = '#DB2777';
 
 // =========================================================
 // SYMBOLS
@@ -35,6 +35,10 @@ type SymbolItem = {
 };
 
 const SYMBOLS: SymbolItem[] = [
+  // Metals
+  { id: 'XAUUSD', label: 'طلا', category: 'metal' },
+  { id: 'XAGUSD', label: 'نقره', category: 'metal' },
+  { id: 'XPTUSD', label: 'پلاتین', category: 'metal' },
   // Crypto
   { id: 'BTCUSD', label: 'بیت‌کوین', category: 'crypto' },
   { id: 'ETHUSD', label: 'اتریوم', category: 'crypto' },
@@ -48,12 +52,6 @@ const SYMBOLS: SymbolItem[] = [
   { id: 'DOTUSD', label: 'Polkadot', category: 'crypto' },
   { id: 'LINKUSD', label: 'Chainlink', category: 'crypto' },
   { id: 'LTCUSD', label: 'Litecoin', category: 'crypto' },
-
-  // Metals
-  { id: 'XAUUSD', label: 'طلا', category: 'metal' },
-  { id: 'XAGUSD', label: 'نقره', category: 'metal' },
-  { id: 'XPTUSD', label: 'پلاتین', category: 'metal' },
-
   // Forex
   { id: 'EURUSD', label: 'یورو/دلار', category: 'forex' },
   { id: 'GBPUSD', label: 'پوند/دلار', category: 'forex' },
@@ -65,7 +63,6 @@ const SYMBOLS: SymbolItem[] = [
   { id: 'EURJPY', label: 'یورو/ین', category: 'forex' },
   { id: 'GBPJPY', label: 'پوند/ین', category: 'forex' },
   { id: 'EURGBP', label: 'یورو/پوند', category: 'forex' },
-
   // Index
   { id: 'SPX', label: 'S&P 500', category: 'index' },
   { id: 'NAS100', label: 'نزدک', category: 'index' },
@@ -76,18 +73,27 @@ const SYMBOLS: SymbolItem[] = [
 ];
 
 const TIMEFRAMES: { id: Timeframe; label: string }[] = [
-  { id: '1m', label: '۱د' },
-  { id: '5m', label: '۵د' },
-  { id: '15m', label: '۱۵د' },
-  { id: '1h', label: '۱س' },
-  { id: '4h', label: '۴س' },
+  { id: '1m', label: '1د' },
+  { id: '5m', label: '5د' },
+  { id: '15m', label: '15د' },
+  { id: '1h', label: '1س' },
+  { id: '4h', label: '4س' },
   { id: '1d', label: 'روز' },
   { id: '1w', label: 'هفته' },
 ];
 
+type ChartType = 'candles' | 'line' | 'area' | 'bars';
+
+const CHART_TYPES: { id: ChartType; label: string; icon: string }[] = [
+  { id: 'candles', label: 'کندل', icon: 'stats-chart' },
+  { id: 'line', label: 'خط', icon: 'trending-up' },
+  { id: 'area', label: 'ناحیه', icon: 'analytics' },
+  { id: 'bars', label: 'میله', icon: 'bar-chart' },
+];
+
 const CATEGORY_LABELS: Record<SymbolItem['category'], string> = {
-  crypto: 'کریپتو',
   metal: 'فلزات',
+  crypto: 'کریپتو',
   forex: 'فارکس',
   index: 'شاخص‌ها',
 };
@@ -100,16 +106,16 @@ const CATEGORY_ORDER: SymbolItem['category'][] = [
 ];
 
 // =========================================================
-// HTML BUILDER (Lightweight Charts v5)
+// HTML BUILDER — Ultra Professional Chart
 // =========================================================
 
 const buildChartHTML = (isDark: boolean): string => {
-  const bg = isDark ? '#050505' : '#FFFFFF';
-  const cardBg = isDark ? '#0F172A' : '#F8FAFC';
+  const bg = isDark ? '#0A0A0A' : '#FFFFFF';
   const textColor = isDark ? '#E5E7EB' : '#0F172A';
-  const mutedColor = isDark ? '#94A3B8' : '#64748B';
-  const gridColor = isDark ? '#1E293B' : '#E2E8F0';
-  const borderColor = isDark ? '#1E293B' : '#E2E8F0';
+  const mutedColor = isDark ? '#71717A' : '#94A3B8';
+  const gridColor = isDark ? '#1A1A1A' : '#F1F5F9';
+  const borderColor = isDark ? '#1E1E1E' : '#E2E8F0';
+  const panelBg = isDark ? '#0F0F0F' : '#FAFAFA';
 
   return `
 <!DOCTYPE html>
@@ -121,50 +127,80 @@ const buildChartHTML = (isDark: boolean): string => {
     * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     html, body {
       width: 100%; height: 100%;
-      background: ${bg};
-      overflow: hidden;
+      background: ${bg}; overflow: hidden;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      color: ${textColor};
-      user-select: none;
+      color: ${textColor}; user-select: none;
     }
-    #top-bar {
-      position: absolute; top: 0; left: 0; right: 0;
-      z-index: 10;
-      background: ${bg};
-      padding: 8px 10px;
-      border-bottom: 1px solid ${borderColor};
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      min-height: 40px;
+
+    /* TOP BAR (OHLC) */
+    #ohlc-bar {
+      position: absolute; top: 0; left: 0; right: 0; height: 32px;
+      background: ${panelBg}; border-bottom: 1px solid ${borderColor};
+      padding: 0 8px; display: flex; align-items: center; gap: 10px;
+      font-size: 10px; font-weight: 700; color: ${mutedColor};
+      z-index: 20; overflow-x: auto;
+      scrollbar-width: none;
     }
-    #ohlc {
-      font-size: 11px;
-      font-weight: 700;
-      color: ${mutedColor};
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-    #ohlc span b { color: ${textColor}; font-weight: 800; }
-    #ohlc .up { color: #16A34A; }
-    #ohlc .down { color: #DC2626; }
+    #ohlc-bar::-webkit-scrollbar { display: none; }
+    #ohlc-bar span { white-space: nowrap; }
+    #ohlc-bar span b { color: ${textColor}; font-weight: 800; }
+    #ohlc-bar .up { color: #16A34A; }
+    #ohlc-bar .down { color: #DC2626; }
+    #ohlc-bar .change-up { color: #16A34A; }
+    #ohlc-bar .change-down { color: #DC2626; }
+
+    /* LEGEND */
     #legend {
-      position: absolute; top: 45px; left: 10px;
-      z-index: 10;
-      font-size: 10px;
-      font-weight: 700;
+      position: absolute; top: 40px; left: 8px; z-index: 15;
+      font-size: 9px; font-weight: 800;
+      background: ${bg}CC; backdrop-filter: blur(4px);
+      padding: 4px 8px; border-radius: 6px;
       display: flex; flex-direction: column; gap: 3px;
       pointer-events: none;
     }
     #legend .row { display: flex; align-items: center; gap: 5px; }
     #legend .dot { width: 8px; height: 8px; border-radius: 50%; }
-    #chart { position: absolute; top: 40px; left: 0; right: 0; bottom: 0; }
+
+    /* MAIN CHART */
+    #main-chart {
+      position: absolute; top: 32px; left: 0; right: 0; bottom: 0;
+    }
+
+    /* SUB CHARTS (RSI / MACD) */
+    .sub-chart {
+      position: absolute; left: 0; right: 0;
+      height: 0;
+      background: ${bg};
+      border-top: 1px solid ${borderColor};
+      display: none;
+      overflow: hidden;
+    }
+    .sub-chart.active { display: block; }
+
+    #rsi-chart { bottom: 0; height: 110px; }
+    #macd-chart { bottom: 0; height: 110px; }
+
+    /* PRICE INFO PANEL */
+    #price-info {
+      position: absolute; top: 40px; right: 8px; z-index: 15;
+      background: ${bg}CC; backdrop-filter: blur(4px);
+      padding: 6px 10px; border-radius: 8px;
+      font-size: 11px; font-weight: 800;
+      text-align: right;
+      pointer-events: none;
+      display: none;
+    }
+    #price-info.active { display: block; }
+    #price-info .price { font-size: 15px; font-weight: 900; }
+    #price-info .diff { font-size: 10px; margin-top: 2px; }
+
+    /* LOADING */
     .loading {
       position: absolute; inset: 0;
       display: flex; flex-direction: column;
       align-items: center; justify-content: center;
       gap: 12px; color: ${mutedColor};
+      background: ${bg}; z-index: 100;
     }
     .spinner {
       width: 32px; height: 32px;
@@ -173,84 +209,147 @@ const buildChartHTML = (isDark: boolean): string => {
       animation: spin 0.8s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ERROR */
+    .error {
+      color: ${RED};
+      font-size: 12px;
+      text-align: center;
+      padding: 20px;
+      line-height: 20px;
+    }
+
+    /* TOOLBAR (bottom-left) */
+    #toolbar {
+      position: absolute; bottom: 8px; left: 8px; z-index: 15;
+      display: flex; gap: 4px;
+      background: ${bg}EE; backdrop-filter: blur(6px);
+      padding: 4px; border-radius: 8px;
+      border: 1px solid ${borderColor};
+      font-size: 10px; font-weight: 800;
+    }
+    #toolbar button {
+      background: transparent; border: none; color: ${mutedColor};
+      padding: 6px 8px; border-radius: 5px; cursor: pointer;
+      font-weight: 800; font-size: 10px;
+      font-family: inherit;
+    }
+    #toolbar button.active { background: #2563EB; color: #FFF; }
   </style>
 </head>
 <body>
-  <div id="top-bar">
-    <div id="ohlc">
-      <span>O: <b id="o-val">—</b></span>
-      <span>H: <b id="h-val">—</b></span>
-      <span>L: <b id="l-val">—</b></span>
-      <span>C: <b id="c-val">—</b></span>
-    </div>
-  </div>
-  <div id="legend"></div>
-  <div id="chart">
-    <div class="loading" id="loading">
-      <div class="spinner"></div>
-      <div>در حال بارگذاری چارت...</div>
-    </div>
+  <div id="ohlc-bar">
+    <span>O <b id="o-val">—</b></span>
+    <span>H <b id="h-val">—</b></span>
+    <span>L <b id="l-val">—</b></span>
+    <span>C <b id="c-val">—</b></span>
+    <span class="change-up" id="chg-val">—</span>
   </div>
 
-  <script src="https://unpkg.com/lightweight-charts@5.0.0/dist/lightweight-charts.standalone.production.js"></script>
+  <div id="legend"></div>
+
+  <div id="price-info">
+    <div class="price" id="pi-price">—</div>
+    <div class="diff" id="pi-diff">—</div>
+  </div>
+
+  <div id="main-chart"></div>
+  <div id="rsi-chart" class="sub-chart"></div>
+  <div id="macd-chart" class="sub-chart"></div>
+
+  <div id="toolbar">
+    <button id="btn-reset" onclick="resetZoom()">ریست</button>
+    <button id="btn-realtime" onclick="scrollRealtime()">آخرین</button>
+    <button id="btn-screenshot" onclick="takeScreenshot()">اسکرین</button>
+  </div>
+
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    <div>در حال بارگذاری چارت...</div>
+  </div>
+
+  <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
   <script>
-    let chart = null;
+    // =====================================================
+    // GLOBAL STATE
+    // =====================================================
+    let mainChart = null;
+    let rsiChart = null;
+    let macdChart = null;
+
     let candleSeries = null;
     let volumeSeries = null;
     let ma20Series = null;
     let ma50Series = null;
+    let ema200Series = null;
     let bbUpperSeries = null;
     let bbLowerSeries = null;
-    let currentCandles = [];
-    let currentShowMA = true;
-    let currentShowBB = false;
-    let currentShowVolume = true;
+    let bbMiddleSeries = null;
 
-    // =========================================================
-    // INIT CHART
-    // =========================================================
+    let rsiSeries = null;
+    let macdLineSeries = null;
+    let macdSignalSeries = null;
+    let macdHistSeries = null;
+
+    let currentCandles = [];
+    let currentChartType = 'candles';
+    let showMA = true;
+    let showEMA200 = false;
+    let showBB = false;
+    let showVolume = true;
+    let showRSI = false;
+    let showMACD = false;
+
+    const COLOR_UP = '#16A34A';
+    const COLOR_DOWN = '#DC2626';
+
+    // =====================================================
+    // INIT
+    // =====================================================
     function initChart() {
       try {
         document.getElementById('loading').style.display = 'none';
 
-        const chartEl = document.getElementById('chart');
-        chart = LightweightCharts.createChart(chartEl, {
-          width: chartEl.clientWidth,
-          height: chartEl.clientHeight,
+        const mainEl = document.getElementById('main-chart');
+
+        mainChart = LightweightCharts.createChart(mainEl, {
+          width: mainEl.clientWidth,
+          height: mainEl.clientHeight,
           layout: {
             background: { type: 'solid', color: '${bg}' },
             textColor: '${textColor}',
-            fontSize: 11,
-            fontFamily: '-apple-system, sans-serif',
+            fontSize: 10,
           },
           grid: {
-            vertLines: { color: '${gridColor}', style: 1 },
-            horzLines: { color: '${gridColor}', style: 1 },
+            vertLines: { color: '${gridColor}' },
+            horzLines: { color: '${gridColor}' },
           },
           rightPriceScale: {
             borderColor: '${borderColor}',
-            scaleMargins: { top: 0.1, bottom: 0.25 },
+            scaleMargins: { top: 0.08, bottom: 0.22 },
           },
           timeScale: {
             borderColor: '${borderColor}',
             timeVisible: true,
             secondsVisible: false,
-            rightOffset: 5,
-            barSpacing: 6,
+            rightOffset: 8,
+            barSpacing: 7,
             minBarSpacing: 0.5,
+            fixLeftEdge: false,
+            lockVisibleTimeRangeOnResize: true,
           },
           crosshair: {
-            mode: 1,
+            mode: 0,
             vertLine: {
               color: '#2563EB',
               width: 1,
-              style: 2,
+              style: 3,
               labelBackgroundColor: '#2563EB',
             },
             horzLine: {
               color: '#2563EB',
               width: 1,
-              style: 2,
+              style: 3,
               labelBackgroundColor: '#2563EB',
             },
           },
@@ -267,32 +366,33 @@ const buildChartHTML = (isDark: boolean): string => {
           },
         });
 
-        // Candles
-        candleSeries = chart.addCandlestickSeries({
-          upColor: '#16A34A',
-          downColor: '#DC2626',
-          borderUpColor: '#16A34A',
-          borderDownColor: '#DC2626',
-          wickUpColor: '#16A34A',
-          wickDownColor: '#DC2626',
+        // Candlestick series
+        candleSeries = mainChart.addCandlestickSeries({
+          upColor: COLOR_UP,
+          downColor: COLOR_DOWN,
+          borderUpColor: COLOR_UP,
+          borderDownColor: COLOR_DOWN,
+          wickUpColor: COLOR_UP,
+          wickDownColor: COLOR_DOWN,
+          priceLineVisible: true,
           priceLineColor: '#2563EB',
           priceLineWidth: 1,
         });
 
         // Volume
-        volumeSeries = chart.addHistogramSeries({
+        volumeSeries = mainChart.addHistogramSeries({
           color: '#2563EB40',
           priceFormat: { type: 'volume' },
           priceScaleId: 'volume',
           lastValueVisible: false,
           priceLineVisible: false,
         });
-        chart.priceScale('volume').applyOptions({
-          scaleMargins: { top: 0.8, bottom: 0 },
+        mainChart.priceScale('volume').applyOptions({
+          scaleMargins: { top: 0.82, bottom: 0 },
         });
 
         // MA20
-        ma20Series = chart.addLineSeries({
+        ma20Series = mainChart.addLineSeries({
           color: '#F59E0B',
           lineWidth: 2,
           priceLineVisible: false,
@@ -301,7 +401,7 @@ const buildChartHTML = (isDark: boolean): string => {
         });
 
         // MA50
-        ma50Series = chart.addLineSeries({
+        ma50Series = mainChart.addLineSeries({
           color: '#7C3AED',
           lineWidth: 2,
           priceLineVisible: false,
@@ -309,8 +409,17 @@ const buildChartHTML = (isDark: boolean): string => {
           crosshairMarkerVisible: false,
         });
 
-        // Bollinger Bands
-        bbUpperSeries = chart.addLineSeries({
+        // EMA200
+        ema200Series = mainChart.addLineSeries({
+          color: '#DB2777',
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        });
+
+        // BB
+        bbUpperSeries = mainChart.addLineSeries({
           color: '#0891B2',
           lineWidth: 1,
           lineStyle: 2,
@@ -318,7 +427,15 @@ const buildChartHTML = (isDark: boolean): string => {
           lastValueVisible: false,
           crosshairMarkerVisible: false,
         });
-        bbLowerSeries = chart.addLineSeries({
+        bbMiddleSeries = mainChart.addLineSeries({
+          color: '#0891B2AA',
+          lineWidth: 1,
+          lineStyle: 0,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        });
+        bbLowerSeries = mainChart.addLineSeries({
           color: '#0891B2',
           lineWidth: 1,
           lineStyle: 2,
@@ -327,198 +444,499 @@ const buildChartHTML = (isDark: boolean): string => {
           crosshairMarkerVisible: false,
         });
 
-        // Update OHLC on crosshair move
-        chart.subscribeCrosshairMove((param) => {
-          if (!param.time || !param.seriesData.has(candleSeries)) {
-            updateOHLC(null);
-            return;
-          }
-          const data = param.seriesData.get(candleSeries);
-          updateOHLC(data);
+        // RSI chart
+        const rsiEl = document.getElementById('rsi-chart');
+        rsiChart = LightweightCharts.createChart(rsiEl, {
+          width: rsiEl.clientWidth,
+          height: 110,
+          layout: { background: { type: 'solid', color: '${bg}' }, textColor: '${textColor}', fontSize: 9 },
+          grid: { vertLines: { color: '${gridColor}' }, horzLines: { color: '${gridColor}' } },
+          rightPriceScale: { borderColor: '${borderColor}', scaleMargins: { top: 0.1, bottom: 0.1 } },
+          timeScale: { visible: false, borderColor: '${borderColor}' },
+          crosshair: { mode: 0 },
+          handleScroll: false,
+          handleScale: false,
+        });
+        rsiSeries = rsiChart.addLineSeries({
+          color: '#7C3AED',
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: true,
         });
 
-        // Resize observer
-        const ro = new ResizeObserver(() => {
-          if (chart && chartEl) {
-            chart.applyOptions({
-              width: chartEl.clientWidth,
-              height: chartEl.clientHeight,
-            });
+        // MACD chart
+        const macdEl = document.getElementById('macd-chart');
+        macdChart = LightweightCharts.createChart(macdEl, {
+          width: macdEl.clientWidth,
+          height: 110,
+          layout: { background: { type: 'solid', color: '${bg}' }, textColor: '${textColor}', fontSize: 9 },
+          grid: { vertLines: { color: '${gridColor}' }, horzLines: { color: '${gridColor}' } },
+          rightPriceScale: { borderColor: '${borderColor}', scaleMargins: { top: 0.1, bottom: 0.1 } },
+          timeScale: { visible: false, borderColor: '${borderColor}' },
+          crosshair: { mode: 0 },
+          handleScroll: false,
+          handleScale: false,
+        });
+        macdHistSeries = macdChart.addHistogramSeries({
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+        macdLineSeries = macdChart.addLineSeries({
+          color: '#2563EB',
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+        macdSignalSeries = macdChart.addLineSeries({
+          color: '#F59E0B',
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+
+        // Sync time scales
+        mainChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+          if (range) {
+            if (rsiChart) rsiChart.timeScale().setVisibleLogicalRange(range);
+            if (macdChart) macdChart.timeScale().setVisibleLogicalRange(range);
           }
         });
-        ro.observe(chartEl);
+
+        // Crosshair sync + OHLC update
+        mainChart.subscribeCrosshairMove((param) => {
+          updateOHLCFromCrosshair(param);
+          syncCrosshair(param);
+        });
+
+        // Resize
+        const resizeObs = new ResizeObserver(() => {
+          if (mainChart && mainEl) {
+            mainChart.applyOptions({ width: mainEl.clientWidth, height: mainEl.clientHeight });
+          }
+          if (rsiChart && rsiEl) {
+            rsiChart.applyOptions({ width: rsiEl.clientWidth });
+          }
+          if (macdChart && macdEl) {
+            macdChart.applyOptions({ width: macdEl.clientWidth });
+          }
+        });
+        resizeObs.observe(mainEl);
 
       } catch (e) {
-        document.getElementById('chart').innerHTML =
-          '<div class="loading">خطا در راه‌اندازی چارت</div>';
         console.error('Init error:', e);
+        document.getElementById('loading').innerHTML =
+          '<div class="error">خطا در راه‌اندازی چارت<br/>' + (e.message || '') + '</div>';
+        document.getElementById('loading').style.display = 'flex';
       }
     }
 
-    // =========================================================
+    // =====================================================
+    // SYNC CROSSHAIR
+    // =====================================================
+    function syncCrosshair(param) {
+      if (!param.time) return;
+      if (rsiChart) rsiChart.setCrosshairPosition(50, param.time, rsiSeries);
+      if (macdChart) macdChart.setCrosshairPosition(0, param.time, macdLineSeries);
+    }
+
+    // =====================================================
     // UPDATE OHLC BAR
-    // =========================================================
-    function updateOHLC(data) {
-      if (!data) {
-        ['o-val','h-val','l-val','c-val'].forEach(id => {
-          document.getElementById(id).textContent = '—';
-          document.getElementById(id).className = '';
-        });
+    // =====================================================
+    function updateOHLCFromCrosshair(param) {
+      if (!param.time || !param.seriesData.has(candleSeries)) {
+        const last = currentCandles[currentCandles.length - 1];
+        if (last) {
+          renderOHLC(last.open, last.high, last.low, last.close);
+        } else {
+          clearOHLC();
+        }
+        document.getElementById('price-info').classList.remove('active');
         return;
       }
-      document.getElementById('o-val').textContent = data.open.toFixed(4);
-      document.getElementById('h-val').textContent = data.high.toFixed(4);
-      document.getElementById('l-val').textContent = data.low.toFixed(4);
-      const cls = data.close >= data.open ? 'up' : 'down';
-      document.getElementById('c-val').textContent = data.close.toFixed(4);
-      document.getElementById('c-val').className = cls;
+      const d = param.seriesData.get(candleSeries);
+      if (d) {
+        renderOHLC(d.open, d.high, d.low, d.close);
+        const diff = d.close - d.open;
+        const pct = d.open !== 0 ? (diff / d.open) * 100 : 0;
+        document.getElementById('pi-price').textContent = d.close.toFixed(d.close > 100 ? 2 : 4);
+        document.getElementById('pi-diff').textContent =
+          (diff >= 0 ? '+' : '') + diff.toFixed(4) + ' (' + (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%)';
+        document.getElementById('pi-diff').style.color = diff >= 0 ? COLOR_UP : COLOR_DOWN;
+        document.getElementById('price-info').classList.add('active');
+      }
     }
 
-    // =========================================================
-    // CALCULATE INDICATORS
-    // =========================================================
+    function renderOHLC(o, h, l, c) {
+      document.getElementById('o-val').textContent = o.toFixed(o > 100 ? 2 : 4);
+      document.getElementById('h-val').textContent = h.toFixed(h > 100 ? 2 : 4);
+      document.getElementById('l-val').textContent = l.toFixed(l > 100 ? 2 : 4);
+      document.getElementById('c-val').textContent = c.toFixed(c > 100 ? 2 : 4);
+      const cls = c >= o ? 'up' : 'down';
+      document.getElementById('c-val').className = cls;
+
+      const diff = c - o;
+      const pct = o !== 0 ? (diff / o) * 100 : 0;
+      const chgEl = document.getElementById('chg-val');
+      chgEl.textContent = (diff >= 0 ? '+' : '') + diff.toFixed(4) + ' (' + (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%)';
+      chgEl.className = diff >= 0 ? 'change-up' : 'change-down';
+    }
+
+    function clearOHLC() {
+      ['o-val','h-val','l-val','c-val','chg-val'].forEach(id => {
+        document.getElementById(id).textContent = '—';
+        document.getElementById(id).className = '';
+      });
+    }
+
+    // =====================================================
+    // INDICATOR CALCULATIONS
+    // =====================================================
     function calcSMA(candles, period) {
       const result = [];
       for (let i = 0; i < candles.length; i++) {
         if (i < period - 1) continue;
         let sum = 0;
         for (let j = 0; j < period; j++) sum += candles[i - j].close;
-        result.push({
-          time: Math.floor(candles[i].timestamp / 1000),
-          value: sum / period,
-        });
+        result.push({ time: Math.floor(candles[i].timestamp / 1000), value: sum / period });
       }
       return result;
     }
 
-    function calcBollingerBands(candles, period, multiplier) {
-      const upper = [];
-      const lower = [];
+    function calcEMA(candles, period) {
+      if (candles.length < period) return [];
+      const k = 2 / (period + 1);
+      const result = [];
+      let ema = 0;
+      for (let i = 0; i < period; i++) ema += candles[i].close;
+      ema = ema / period;
+      result.push({ time: Math.floor(candles[period - 1].timestamp / 1000), value: ema });
+      for (let i = period; i < candles.length; i++) {
+        ema = candles[i].close * k + ema * (1 - k);
+        result.push({ time: Math.floor(candles[i].timestamp / 1000), value: ema });
+      }
+      return result;
+    }
+
+    function calcBB(candles, period, mult) {
+      const upper = [], middle = [], lower = [];
       for (let i = 0; i < candles.length; i++) {
         if (i < period - 1) continue;
         let sum = 0;
         for (let j = 0; j < period; j++) sum += candles[i - j].close;
         const sma = sum / period;
         let variance = 0;
-        for (let j = 0; j < period; j++) {
-          variance += Math.pow(candles[i - j].close - sma, 2);
-        }
+        for (let j = 0; j < period; j++) variance += Math.pow(candles[i - j].close - sma, 2);
         const stdDev = Math.sqrt(variance / period);
-        upper.push({
-          time: Math.floor(candles[i].timestamp / 1000),
-          value: sma + stdDev * multiplier,
-        });
-        lower.push({
-          time: Math.floor(candles[i].timestamp / 1000),
-          value: sma - stdDev * multiplier,
-        });
+        const t = Math.floor(candles[i].timestamp / 1000);
+        upper.push({ time: t, value: sma + stdDev * mult });
+        middle.push({ time: t, value: sma });
+        lower.push({ time: t, value: sma - stdDev * mult });
       }
-      return { upper, lower };
+      return { upper, middle, lower };
     }
 
-    // =========================================================
+    function calcRSI(candles, period) {
+      if (candles.length <= period) return [];
+      const result = [];
+      let avgGain = 0, avgLoss = 0;
+      for (let i = 1; i <= period; i++) {
+        const diff = candles[i].close - candles[i - 1].close;
+        if (diff >= 0) avgGain += diff; else avgLoss -= diff;
+      }
+      avgGain /= period; avgLoss /= period;
+      const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+      result.push({ time: Math.floor(candles[period].timestamp / 1000), value: 100 - 100 / (1 + rs) });
+
+      for (let i = period + 1; i < candles.length; i++) {
+        const diff = candles[i].close - candles[i - 1].close;
+        const gain = diff > 0 ? diff : 0;
+        const loss = diff < 0 ? -diff : 0;
+        avgGain = (avgGain * (period - 1) + gain) / period;
+        avgLoss = (avgLoss * (period - 1) + loss) / period;
+        const r = avgLoss === 0 ? 100 : avgGain / avgLoss;
+        result.push({ time: Math.floor(candles[i].timestamp / 1000), value: 100 - 100 / (1 + r) });
+      }
+      return result;
+    }
+
+    function calcMACD(candles, fast, slow, signal) {
+      const emaFast = calcEMA(candles, fast);
+      const emaSlow = calcEMA(candles, slow);
+      const map = new Map();
+      emaSlow.forEach(e => map.set(e.time, e.value));
+      const macd = [];
+      emaFast.forEach(e => {
+        if (map.has(e.time)) {
+          macd.push({ time: e.time, value: e.value - map.get(e.time) });
+        }
+      });
+      if (macd.length === 0) return { macd: [], signal: [], hist: [] };
+      const signalPeriod = signal;
+      const k = 2 / (signalPeriod + 1);
+      let sig = 0;
+      for (let i = 0; i < Math.min(signalPeriod, macd.length); i++) sig += macd[i].value;
+      sig = sig / signalPeriod;
+      const signalLine = [];
+      const histLine = [];
+      for (let i = signalPeriod - 1; i < macd.length; i++) {
+        if (i === signalPeriod - 1) {
+          signalLine.push({ time: macd[i].time, value: sig });
+        } else {
+          sig = macd[i].value * k + sig * (1 - k);
+          signalLine.push({ time: macd[i].time, value: sig });
+        }
+        const h = macd[i].value - sig;
+        histLine.push({
+          time: macd[i].time,
+          value: h,
+          color: h >= 0 ? '#16A34A80' : '#DC262680',
+        });
+      }
+      return { macd, signal: signalLine, hist: histLine };
+    }
+
+    // =====================================================
+    // UPDATE LEGEND
+    // =====================================================
+    function updateLegend() {
+      const legend = document.getElementById('legend');
+      let html = '';
+      if (showMA) {
+        html += '<div class="row"><div class="dot" style="background:#F59E0B"></div><span>MA 20</span></div>';
+        html += '<div class="row"><div class="dot" style="background:#7C3AED"></div><span>MA 50</span></div>';
+      }
+      if (showEMA200) {
+        html += '<div class="row"><div class="dot" style="background:#DB2777"></div><span>EMA 200</span></div>';
+      }
+      if (showBB) {
+        html += '<div class="row"><div class="dot" style="background:#0891B2"></div><span>Bollinger 20</span></div>';
+      }
+      legend.innerHTML = html;
+    }
+
+    // =====================================================
     // SET CANDLES
-    // =========================================================
+    // =====================================================
     window.setCandles = function (candles) {
-      if (!chart || !candleSeries || !candles || candles.length === 0) return;
+      if (!mainChart || !candleSeries || !candles || candles.length === 0) return;
 
       currentCandles = candles;
 
       const formatted = candles.map(c => ({
         time: Math.floor(c.timestamp / 1000),
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
+        open: c.open, high: c.high, low: c.low, close: c.close,
       }));
 
       candleSeries.setData(formatted);
 
       // Volume
-      if (currentShowVolume && volumeSeries) {
+      if (volumeSeries) {
         const volumeData = candles.map(c => ({
           time: Math.floor(c.timestamp / 1000),
           value: c.volume || 0,
-          color: c.close >= c.open ? '#16A34A40' : '#DC262640',
+          color: c.close >= c.open ? '#16A34A30' : '#DC262630',
         }));
         volumeSeries.setData(volumeData);
+        volumeSeries.applyOptions({ visible: showVolume });
       }
 
-      // MA20
-      if (currentShowMA && ma20Series) {
-        ma20Series.setData(calcSMA(candles, 20));
+      // Indicators
+      if (ma20Series) { ma20Series.setData(showMA ? calcSMA(candles, 20) : []); ma20Series.applyOptions({ visible: showMA }); }
+      if (ma50Series) { ma50Series.setData(showMA ? calcSMA(candles, 50) : []); ma50Series.applyOptions({ visible: showMA }); }
+      if (ema200Series) { ema200Series.setData(showEMA200 ? calcEMA(candles, 200) : []); ema200Series.applyOptions({ visible: showEMA200 }); }
+
+      if (bbUpperSeries && bbMiddleSeries && bbLowerSeries) {
+        if (showBB) {
+          const bb = calcBB(candles, 20, 2);
+          bbUpperSeries.setData(bb.upper);
+          bbMiddleSeries.setData(bb.middle);
+          bbLowerSeries.setData(bb.lower);
+        } else {
+          bbUpperSeries.setData([]);
+          bbMiddleSeries.setData([]);
+          bbLowerSeries.setData([]);
+        }
+        bbUpperSeries.applyOptions({ visible: showBB });
+        bbMiddleSeries.applyOptions({ visible: showBB });
+        bbLowerSeries.applyOptions({ visible: showBB });
       }
 
-      // MA50
-      if (currentShowMA && ma50Series) {
-        ma50Series.setData(calcSMA(candles, 50));
+      // RSI
+      if (showRSI && rsiSeries) {
+        const rsi = calcRSI(candles, 14);
+        rsiSeries.setData(rsi);
       }
 
-      // Bollinger Bands
-      if (currentShowBB && bbUpperSeries && bbLowerSeries) {
-        const bb = calcBollingerBands(candles, 20, 2);
-        bbUpperSeries.setData(bb.upper);
-        bbLowerSeries.setData(bb.lower);
+      // MACD
+      if (showMACD && macdLineSeries && macdSignalSeries && macdHistSeries) {
+        const macd = calcMACD(candles, 12, 26, 9);
+        macdLineSeries.setData(macd.macd);
+        macdSignalSeries.setData(macd.signal);
+        macdHistSeries.setData(macd.hist);
       }
 
       updateLegend();
+      mainChart.timeScale().fitContent();
 
-      // Fit all data
-      chart.timeScale().fitContent();
+      // Update OHLC with last candle
+      const last = candles[candles.length - 1];
+      if (last) renderOHLC(last.open, last.high, last.low, last.close);
     };
 
-    // =========================================================
-    // TOGGLE INDICATORS
-    // =========================================================
+    // =====================================================
+    // SET CHART TYPE
+    // =====================================================
+    window.setChartType = function (type) {
+      if (!mainChart) return;
+      currentChartType = type;
+      
+      // Remove old series
+      if (candleSeries) { mainChart.removeSeries(candleSeries); candleSeries = null; }
+
+      const commonOptions = {
+        priceLineVisible: true,
+        priceLineColor: '#2563EB',
+        priceLineWidth: 1,
+      };
+
+      if (type === 'candles') {
+        candleSeries = mainChart.addCandlestickSeries({
+          upColor: COLOR_UP, downColor: COLOR_DOWN,
+          borderUpColor: COLOR_UP, borderDownColor: COLOR_DOWN,
+          wickUpColor: COLOR_UP, wickDownColor: COLOR_DOWN,
+          ...commonOptions,
+        });
+      } else if (type === 'line') {
+        candleSeries = mainChart.addLineSeries({
+          color: '#2563EB', lineWidth: 2, ...commonOptions,
+        });
+      } else if (type === 'area') {
+        candleSeries = mainChart.addAreaSeries({
+          topColor: '#2563EB50', bottomColor: '#2563EB05',
+          lineColor: '#2563EB', lineWidth: 2, ...commonOptions,
+        });
+      } else if (type === 'bars') {
+        candleSeries = mainChart.addBarSeries({
+          upColor: COLOR_UP, downColor: COLOR_DOWN, ...commonOptions,
+        });
+      }
+
+      // Re-apply data
+      if (currentCandles.length > 0) {
+        window.setCandles(currentCandles);
+      }
+    };
+
+    // =====================================================
+    // TOGGLES
+    // =====================================================
     window.toggleMA = function (show) {
-      currentShowMA = show;
+      showMA = show;
       if (ma20Series) ma20Series.applyOptions({ visible: show });
       if (ma50Series) ma50Series.applyOptions({ visible: show });
       updateLegend();
     };
 
+    window.toggleEMA200 = function (show) {
+      showEMA200 = show;
+      if (ema200Series) ema200Series.applyOptions({ visible: show });
+      if (show && currentCandles.length) {
+        ema200Series.setData(calcEMA(currentCandles, 200));
+      }
+      updateLegend();
+    };
+
     window.toggleBB = function (show) {
-      currentShowBB = show;
+      showBB = show;
       if (bbUpperSeries) bbUpperSeries.applyOptions({ visible: show });
+      if (bbMiddleSeries) bbMiddleSeries.applyOptions({ visible: show });
       if (bbLowerSeries) bbLowerSeries.applyOptions({ visible: show });
+      if (show && currentCandles.length) {
+        const bb = calcBB(currentCandles, 20, 2);
+        bbUpperSeries.setData(bb.upper);
+        bbMiddleSeries.setData(bb.middle);
+        bbLowerSeries.setData(bb.lower);
+      }
       updateLegend();
     };
 
     window.toggleVolume = function (show) {
-      currentShowVolume = show;
+      showVolume = show;
       if (volumeSeries) volumeSeries.applyOptions({ visible: show });
     };
 
-    // =========================================================
-    // LEGEND
-    // =========================================================
-    function updateLegend() {
-      const legend = document.getElementById('legend');
-      let html = '';
-      if (currentShowMA) {
-        html += '<div class="row"><div class="dot" style="background:#F59E0B"></div><span>MA 20</span></div>';
-        html += '<div class="row"><div class="dot" style="background:#7C3AED"></div><span>MA 50</span></div>';
+    window.toggleRSI = function (show) {
+      showRSI = show;
+      const el = document.getElementById('rsi-chart');
+      if (show) {
+        el.classList.add('active');
+        if (currentCandles.length && rsiSeries) {
+          rsiSeries.setData(calcRSI(currentCandles, 14));
+        }
+      } else {
+        el.classList.remove('active');
       }
-      if (currentShowBB) {
-        html += '<div class="row"><div class="dot" style="background:#0891B2"></div><span>Bollinger</span></div>';
+      // adjust main chart height
+      setTimeout(() => resizeAll(), 50);
+    };
+
+    window.toggleMACD = function (show) {
+      showMACD = show;
+      const el = document.getElementById('macd-chart');
+      if (show) {
+        el.classList.add('active');
+        if (currentCandles.length && macdLineSeries) {
+          const macd = calcMACD(currentCandles, 12, 26, 9);
+          macdLineSeries.setData(macd.macd);
+          macdSignalSeries.setData(macd.signal);
+          macdHistSeries.setData(macd.hist);
+        }
+      } else {
+        el.classList.remove('active');
       }
-      legend.innerHTML = html;
+      setTimeout(() => resizeAll(), 50);
+    };
+
+    // =====================================================
+    // RESIZE
+    // =====================================================
+    function resizeAll() {
+      const mainEl = document.getElementById('main-chart');
+      const rsiEl = document.getElementById('rsi-chart');
+      const macdEl = document.getElementById('macd-chart');
+      const rsiActive = rsiEl.classList.contains('active');
+      const macdActive = macdEl.classList.contains('active');
+      const bottomOffset = (rsiActive ? 110 : 0) + (macdActive ? 110 : 0);
+      
+      mainEl.style.bottom = bottomOffset + 'px';
+      
+      if (mainChart && mainEl) mainChart.applyOptions({ width: mainEl.clientWidth, height: mainEl.clientHeight });
+      if (rsiChart && rsiEl) rsiChart.applyOptions({ width: rsiEl.clientWidth });
+      if (macdChart && macdEl) macdChart.applyOptions({ width: macdEl.clientWidth });
     }
 
-    // =========================================================
-    // FIT CONTENT
-    // =========================================================
-    window.fitContent = function() {
-      if (chart) chart.timeScale().fitContent();
+    // =====================================================
+    // ACTIONS
+    // =====================================================
+    window.fitContent = function () { if (mainChart) mainChart.timeScale().fitContent(); };
+    window.scrollRealtime = function () { if (mainChart) mainChart.timeScale().scrollToRealTime(); };
+    window.resetZoom = function () { if (mainChart) mainChart.timeScale().fitContent(); };
+
+    window.takeScreenshot = function () {
+      try {
+        const canvas = mainChart.takeScreenshot();
+        const dataUrl = canvas.toDataURL('image/png');
+        if (window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'screenshot', data: dataUrl }));
+        }
+      } catch (e) {
+        console.log('Screenshot error:', e);
+      }
     };
 
-    window.scrollToRealtime = function() {
-      if (chart) chart.timeScale().scrollToRealTime();
-    };
-
-    // =========================================================
+    // =====================================================
     // START
-    // =========================================================
+    // =====================================================
     if (document.readyState === 'complete') initChart();
     else window.addEventListener('load', initChart);
   </script>
@@ -542,9 +960,13 @@ export default function ChartScreen() {
   const [showSymbolPicker, setShowSymbolPicker] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
+  const [chartType, setChartType] = useState<ChartType>('candles');
   const [showMA, setShowMA] = useState(true);
+  const [showEMA200, setShowEMA200] = useState(false);
   const [showBB, setShowBB] = useState(false);
   const [showVolume, setShowVolume] = useState(true);
+  const [showRSI, setShowRSI] = useState(false);
+  const [showMACD, setShowMACD] = useState(false);
   const [chartReady, setChartReady] = useState(false);
 
   const html = useMemo(() => buildChartHTML(isDark), [isDark]);
@@ -557,11 +979,7 @@ export default function ChartScreen() {
   const loadCandles = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await fetchCandles(
-        selectedSymbol.id,
-        selectedTimeframe,
-        1000
-      );
+      const data = await fetchCandles(selectedSymbol.id, selectedTimeframe, 1000);
       setCandles(data);
     } catch (e) {
       console.log('Load candles error:', e);
@@ -576,57 +994,62 @@ export default function ChartScreen() {
   }, [loadCandles]);
 
   // =========================================================
-  // SEND DATA TO WEBVIEW
+  // SEND DATA
   // =========================================================
 
-  const sendDataToWebView = useCallback(() => {
+  useEffect(() => {
     if (!webViewRef.current || candles.length === 0 || !chartReady) return;
-
-    // Candles
-    const script = `window.setCandles(${JSON.stringify(candles)}); true;`;
-    webViewRef.current.injectJavaScript(script);
+    webViewRef.current.injectJavaScript(
+      `window.setCandles(${JSON.stringify(candles)}); true;`
+    );
   }, [candles, chartReady]);
 
-  useEffect(() => {
-    sendDataToWebView();
-  }, [sendDataToWebView]);
-
-  // =========================================================
-  // TOGGLE INDICATORS
-  // =========================================================
-
+  // Toggle indicators
   useEffect(() => {
     if (!webViewRef.current || !chartReady) return;
-    webViewRef.current.injectJavaScript(
-      `window.toggleMA(${showMA}); true;`
-    );
+    webViewRef.current.injectJavaScript(`window.toggleMA(${showMA}); true;`);
   }, [showMA, chartReady]);
 
   useEffect(() => {
     if (!webViewRef.current || !chartReady) return;
-    webViewRef.current.injectJavaScript(
-      `window.toggleBB(${showBB}); true;`
-    );
+    webViewRef.current.injectJavaScript(`window.toggleEMA200(${showEMA200}); true;`);
+  }, [showEMA200, chartReady]);
+
+  useEffect(() => {
+    if (!webViewRef.current || !chartReady) return;
+    webViewRef.current.injectJavaScript(`window.toggleBB(${showBB}); true;`);
   }, [showBB, chartReady]);
 
   useEffect(() => {
     if (!webViewRef.current || !chartReady) return;
-    webViewRef.current.injectJavaScript(
-      `window.toggleVolume(${showVolume}); true;`
-    );
+    webViewRef.current.injectJavaScript(`window.toggleVolume(${showVolume}); true;`);
   }, [showVolume, chartReady]);
 
+  useEffect(() => {
+    if (!webViewRef.current || !chartReady) return;
+    webViewRef.current.injectJavaScript(`window.toggleRSI(${showRSI}); true;`);
+  }, [showRSI, chartReady]);
+
+  useEffect(() => {
+    if (!webViewRef.current || !chartReady) return;
+    webViewRef.current.injectJavaScript(`window.toggleMACD(${showMACD}); true;`);
+  }, [showMACD, chartReady]);
+
+  // Chart type
+  useEffect(() => {
+    if (!webViewRef.current || !chartReady) return;
+    webViewRef.current.injectJavaScript(`window.setChartType('${chartType}'); true;`);
+  }, [chartType, chartReady]);
+
   // =========================================================
-  // FILTERED SYMBOLS
+  // FILTER SYMBOLS
   // =========================================================
 
   const filteredSymbols = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return SYMBOLS;
     return SYMBOLS.filter(
-      (s) =>
-        s.id.toLowerCase().includes(q) ||
-        s.label.toLowerCase().includes(q)
+      (s) => s.id.toLowerCase().includes(q) || s.label.toLowerCase().includes(q)
     );
   }, [searchQuery]);
 
@@ -647,188 +1070,161 @@ export default function ChartScreen() {
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
       {/* HEADER */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <View style={styles.headerLeft}>
-          <View style={styles.brandRow}>
-            <Text style={[styles.brand, { color: colors.text }]}>NAVASAN</Text>
-            <View style={[styles.liveBadge, { backgroundColor: `${GREEN}22` }]}>
-              <View style={styles.liveDot} />
-              <Text style={styles.liveText}>LIVE</Text>
-            </View>
-          </View>
-          <Text style={[styles.subtitle, { color: colors.mutedText }]}>
-            {selectedSymbol.label} • {selectedTimeframe}
-          </Text>
-        </View>
-
         <TouchableOpacity
           onPress={() => setShowSymbolPicker(true)}
-          style={[
-            styles.iconBtn,
-            { backgroundColor: colors.card, borderColor: colors.border },
-          ]}
+          style={styles.symbolBtn}
+          activeOpacity={0.7}
         >
-          <Ionicons name="search" size={20} color={colors.text} />
+          <View style={styles.headerLeft}>
+            <View style={styles.brandRow}>
+              <Text style={[styles.brand, { color: colors.text }]}>
+                {selectedSymbol.id}
+              </Text>
+              <View style={[styles.liveBadge, { backgroundColor: `${GREEN}22` }]}>
+                <View style={styles.liveDot} />
+                <Text style={styles.liveText}>LIVE</Text>
+              </View>
+            </View>
+            <Text style={[styles.subtitle, { color: colors.mutedText }]}>
+              {selectedSymbol.label}
+            </Text>
+          </View>
+          <Ionicons name="chevron-down" size={18} color={colors.mutedText} />
         </TouchableOpacity>
+
+        <View style={styles.headerRight}>
+          {latest && (
+            <View style={styles.priceBox}>
+              <Text style={[styles.priceText, { color: colors.text }]}>
+                {latest.close.toFixed(latest.close > 100 ? 2 : 4)}
+              </Text>
+              <Text
+                style={[
+                  styles.changeText,
+                  { color: isUp ? GREEN : RED },
+                ]}
+              >
+                {isUp ? '▲' : '▼'} {Math.abs(priceChangePct).toFixed(2)}%
+              </Text>
+            </View>
+          )}
+        </View>
       </View>
 
-      {/* SYMBOL INFO */}
-      {latest && (
-        <View
-          style={[
-            styles.priceBar,
-            { backgroundColor: colors.card, borderBottomColor: colors.border },
-          ]}
-        >
-          <View>
-            <Text style={[styles.symbolId, { color: colors.mutedText }]}>
-              {selectedSymbol.id}
-            </Text>
-            <Text style={[styles.priceText, { color: colors.text }]}>
-              {latest.close.toFixed(latest.close > 100 ? 2 : 4)}
-            </Text>
-          </View>
-
-          <View style={styles.changeBox}>
-            <Ionicons
-              name={isUp ? 'arrow-up-circle' : 'arrow-down-circle'}
-              size={18}
-              color={isUp ? GREEN : RED}
-            />
-            <Text
-              style={[
-                styles.changeText,
-                { color: isUp ? GREEN : RED },
-              ]}
-            >
-              {isUp ? '+' : ''}
-              {priceChangePct.toFixed(2)}%
-            </Text>
-          </View>
-        </View>
-      )}
-
-      {/* TIMEFRAME ROW */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.timeframeRow}
+      {/* TIMEFRAME + CHART TYPE ROW */}
+      <View
         style={[
-          styles.timeframeBar,
+          styles.toolbar,
           { backgroundColor: colors.card, borderBottomColor: colors.border },
         ]}
       >
-        {TIMEFRAMES.map((tf) => {
-          const active = tf.id === selectedTimeframe;
-          return (
-            <TouchableOpacity
-              key={tf.id}
-              onPress={() => setSelectedTimeframe(tf.id)}
-              style={[
-                styles.tfBtn,
-                {
-                  backgroundColor: active ? BLUE : colors.input,
-                  borderColor: active ? BLUE : colors.border,
-                },
-              ]}
-            >
-              <Text
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.tfRow}
+        >
+          {TIMEFRAMES.map((tf) => {
+            const active = tf.id === selectedTimeframe;
+            return (
+              <TouchableOpacity
+                key={tf.id}
+                onPress={() => setSelectedTimeframe(tf.id)}
                 style={[
-                  styles.tfText,
-                  { color: active ? '#FFFFFF' : colors.mutedText },
+                  styles.tfBtn,
+                  {
+                    backgroundColor: active ? BLUE : 'transparent',
+                    borderColor: active ? BLUE : colors.border,
+                  },
                 ]}
               >
-                {tf.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
-
-      {/* INDICATOR TOGGLES */}
-      <View style={styles.indicatorRow}>
-        <TouchableOpacity
-          onPress={() => setShowMA(!showMA)}
-          style={[
-            styles.indicatorBtn,
-            {
-              backgroundColor: showMA ? `${BLUE}22` : colors.input,
-              borderColor: showMA ? BLUE : colors.border,
-            },
-          ]}
-        >
-          <View style={[styles.indicatorDot, { backgroundColor: '#F59E0B' }]} />
-          <Text
-            style={[
-              styles.indicatorText,
-              { color: showMA ? BLUE : colors.mutedText },
-            ]}
-          >
-            MA
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={() => setShowBB(!showBB)}
-          style={[
-            styles.indicatorBtn,
-            {
-              backgroundColor: showBB ? `${BLUE}22` : colors.input,
-              borderColor: showBB ? BLUE : colors.border,
-            },
-          ]}
-        >
-          <View style={[styles.indicatorDot, { backgroundColor: '#0891B2' }]} />
-          <Text
-            style={[
-              styles.indicatorText,
-              { color: showBB ? BLUE : colors.mutedText },
-            ]}
-          >
-            BB
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={() => setShowVolume(!showVolume)}
-          style={[
-            styles.indicatorBtn,
-            {
-              backgroundColor: showVolume ? `${BLUE}22` : colors.input,
-              borderColor: showVolume ? BLUE : colors.border,
-            },
-          ]}
-        >
-          <Ionicons
-            name="bar-chart-outline"
-            size={12}
-            color={showVolume ? BLUE : colors.mutedText}
-          />
-          <Text
-            style={[
-              styles.indicatorText,
-              { color: showVolume ? BLUE : colors.mutedText },
-            ]}
-          >
-            Vol
-          </Text>
-        </TouchableOpacity>
-
-        <View style={{ flex: 1 }} />
-
-        <TouchableOpacity
-          onPress={() => {
-            webViewRef.current?.injectJavaScript(
-              'window.scrollToRealtime(); true;'
+                <Text
+                  style={[
+                    styles.tfText,
+                    { color: active ? '#FFFFFF' : colors.mutedText },
+                  ]}
+                >
+                  {tf.label}
+                </Text>
+              </TouchableOpacity>
             );
-          }}
-          style={[
-            styles.indicatorBtn,
-            { backgroundColor: colors.input, borderColor: colors.border },
-          ]}
-        >
-          <Ionicons name="arrow-forward" size={12} color={colors.mutedText} />
-        </TouchableOpacity>
+          })}
+
+          <View style={[styles.divider, { backgroundColor: colors.border }]} />
+
+          {CHART_TYPES.map((ct) => {
+            const active = ct.id === chartType;
+            return (
+              <TouchableOpacity
+                key={ct.id}
+                onPress={() => setChartType(ct.id)}
+                style={[
+                  styles.typeBtn,
+                  {
+                    backgroundColor: active ? `${BLUE}22` : 'transparent',
+                  },
+                ]}
+              >
+                <Ionicons
+                  name={ct.icon as any}
+                  size={14}
+                  color={active ? BLUE : colors.mutedText}
+                />
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
       </View>
+
+      {/* INDICATORS ROW */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.indicatorsRow}
+      >
+        <IndicatorChip
+          label="MA"
+          color={AMBER}
+          active={showMA}
+          onPress={() => setShowMA(!showMA)}
+          colors={colors}
+        />
+        <IndicatorChip
+          label="EMA 200"
+          color={PINK}
+          active={showEMA200}
+          onPress={() => setShowEMA200(!showEMA200)}
+          colors={colors}
+        />
+        <IndicatorChip
+          label="Bollinger"
+          color={CYAN}
+          active={showBB}
+          onPress={() => setShowBB(!showBB)}
+          colors={colors}
+        />
+        <IndicatorChip
+          label="Volume"
+          color={BLUE}
+          active={showVolume}
+          onPress={() => setShowVolume(!showVolume)}
+          colors={colors}
+          icon="bar-chart-outline"
+        />
+        <IndicatorChip
+          label="RSI"
+          color={PURPLE}
+          active={showRSI}
+          onPress={() => setShowRSI(!showRSI)}
+          colors={colors}
+        />
+        <IndicatorChip
+          label="MACD"
+          color={BLUE}
+          active={showMACD}
+          onPress={() => setShowMACD(!showMACD)}
+          colors={colors}
+        />
+      </ScrollView>
 
       {/* CHART */}
       <View style={styles.chartWrap}>
@@ -852,8 +1248,14 @@ export default function ChartScreen() {
             bounces={false}
             overScrollMode="never"
             onLoadEnd={() => setChartReady(true)}
+            onError={(e) => console.log('[Chart] WebView error:', e.nativeEvent)}
             onMessage={(event) => {
-              console.log('[Chart]', event.nativeEvent.data);
+              try {
+                const msg = JSON.parse(event.nativeEvent.data);
+                if (msg.type === 'screenshot') {
+                  console.log('Screenshot received, length:', msg.data.length);
+                }
+              } catch {}
             }}
           />
         )}
@@ -906,17 +1308,12 @@ export default function ChartScreen() {
 
             <ScrollView showsVerticalScrollIndicator={false}>
               {CATEGORY_ORDER.map((cat) => {
-                const items = filteredSymbols.filter(
-                  (s) => s.category === cat
-                );
+                const items = filteredSymbols.filter((s) => s.category === cat);
                 if (items.length === 0) return null;
                 return (
                   <View key={cat} style={styles.categorySection}>
                     <Text
-                      style={[
-                        styles.categoryLabel,
-                        { color: colors.mutedText },
-                      ]}
+                      style={[styles.categoryLabel, { color: colors.mutedText }]}
                     >
                       {CATEGORY_LABELS[cat]}
                     </Text>
@@ -966,28 +1363,18 @@ export default function ChartScreen() {
                           </View>
                           <View style={{ flex: 1 }}>
                             <Text
-                              style={[
-                                styles.pickerLabel,
-                                { color: colors.text },
-                              ]}
+                              style={[styles.pickerLabel, { color: colors.text }]}
                             >
                               {s.label}
                             </Text>
                             <Text
-                              style={[
-                                styles.pickerId,
-                                { color: colors.mutedText },
-                              ]}
+                              style={[styles.pickerId, { color: colors.mutedText }]}
                             >
                               {s.id}
                             </Text>
                           </View>
                           {active && (
-                            <Ionicons
-                              name="checkmark-circle"
-                              size={20}
-                              color={BLUE}
-                            />
+                            <Ionicons name="checkmark-circle" size={20} color={BLUE} />
                           )}
                         </TouchableOpacity>
                       );
@@ -1005,6 +1392,57 @@ export default function ChartScreen() {
 }
 
 // =========================================================
+// INDICATOR CHIP
+// =========================================================
+
+function IndicatorChip({
+  label,
+  color,
+  active,
+  onPress,
+  colors,
+  icon,
+}: {
+  label: string;
+  color: string;
+  active: boolean;
+  onPress: () => void;
+  colors: any;
+  icon?: string;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      style={[
+        styles.indicatorChip,
+        {
+          backgroundColor: active ? `${color}22` : colors.input,
+          borderColor: active ? color : colors.border,
+        },
+      ]}
+    >
+      {icon ? (
+        <Ionicons
+          name={icon as any}
+          size={11}
+          color={active ? color : colors.mutedText}
+        />
+      ) : (
+        <View style={[styles.indicatorDot, { backgroundColor: color }]} />
+      )}
+      <Text
+        style={[
+          styles.indicatorLabel,
+          { color: active ? color : colors.mutedText },
+        ]}
+      >
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+// =========================================================
 // STYLES
 // =========================================================
 
@@ -1012,76 +1450,73 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
 
   header: {
-    paddingHorizontal: 18,
+    paddingHorizontal: 14,
     paddingTop: Platform.OS === 'ios' ? 56 : 50,
-    paddingBottom: 12,
+    paddingBottom: 10,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     borderBottomWidth: 1,
   },
+  symbolBtn: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   headerLeft: { flex: 1 },
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  brand: { fontSize: 22, fontWeight: '900', letterSpacing: 1 },
+  headerRight: { alignItems: 'flex-end' },
+  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  brand: { fontSize: 18, fontWeight: '900', letterSpacing: 0.5 },
   liveBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 6,
+    gap: 3,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 5,
   },
-  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: GREEN },
+  liveDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: GREEN },
   liveText: {
     color: GREEN,
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: '900',
-    letterSpacing: 0.5,
+    letterSpacing: 0.4,
   },
-  subtitle: { fontSize: 11, fontWeight: '600', marginTop: 3 },
-  iconBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-  },
+  subtitle: { fontSize: 10, fontWeight: '600', marginTop: 2 },
 
-  priceBar: {
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-  },
-  symbolId: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
-  priceText: { fontSize: 22, fontWeight: '900', marginTop: 2 },
-  changeBox: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  changeText: { fontSize: 14, fontWeight: '900' },
+  priceBox: { alignItems: 'flex-end' },
+  priceText: { fontSize: 16, fontWeight: '900' },
+  changeText: { fontSize: 11, fontWeight: '800', marginTop: 2 },
 
-  timeframeBar: { borderBottomWidth: 1 },
-  timeframeRow: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    gap: 6,
+  toolbar: { borderBottomWidth: 1 },
+  tfRow: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 5,
+    alignItems: 'center',
   },
   tfBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
     borderWidth: 1,
+    minWidth: 36,
+    alignItems: 'center',
   },
-  tfText: { fontSize: 11, fontWeight: '900' },
+  tfText: { fontSize: 10, fontWeight: '900' },
 
-  indicatorRow: {
-    flexDirection: 'row',
-    paddingHorizontal: 14,
+  divider: { width: 1, height: 20, marginHorizontal: 4 },
+
+  typeBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  indicatorsRow: {
+    paddingHorizontal: 10,
     paddingVertical: 8,
     gap: 6,
   },
-  indicatorBtn: {
+  indicatorChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
@@ -1090,8 +1525,8 @@ const styles = StyleSheet.create({
     borderRadius: 9,
     borderWidth: 1,
   },
-  indicatorDot: { width: 8, height: 8, borderRadius: 4 },
-  indicatorText: { fontSize: 10, fontWeight: '900' },
+  indicatorDot: { width: 7, height: 7, borderRadius: 4 },
+  indicatorLabel: { fontSize: 10, fontWeight: '900' },
 
   chartWrap: { flex: 1, position: 'relative' },
   webview: { flex: 1, backgroundColor: 'transparent' },
