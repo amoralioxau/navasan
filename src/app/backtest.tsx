@@ -4,9 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -15,6 +17,16 @@ import {
 import { WebView } from 'react-native-webview';
 
 import { useNavasanTheme } from '@/context/theme-context';
+import {
+  buildBacktestChartHTML,
+  buildEquityCurveHTML,
+  calcStats,
+  createTrade,
+  DEFAULT_SETTINGS,
+  processTrade,
+  type BacktestSettings,
+  type BacktestTrade,
+} from '@/lib/backtest-engine';
 import { fetchCandles, type Candle, type Timeframe } from '@/lib/market-data';
 
 const BLUE = '#2563EB';
@@ -22,6 +34,7 @@ const GREEN = '#16A34A';
 const RED = '#DC2626';
 const AMBER = '#D97706';
 const GOLD = '#EAB308';
+const PURPLE = '#7C3AED';
 
 // =========================================================
 // DATA
@@ -30,6 +43,7 @@ const GOLD = '#EAB308';
 const SYMBOLS = [
   { id: 'XAUUSD', label: 'طلا' },
   { id: 'BTCUSD', label: 'بیت‌کوین' },
+  { id: 'ETHUSD', label: 'اتریوم' },
   { id: 'EURUSD', label: 'یورو/دلار' },
   { id: 'GBPUSD', label: 'پوند/دلار' },
   { id: 'SPX', label: 'S&P 500' },
@@ -42,111 +56,9 @@ const TIMEFRAMES: { id: Timeframe; label: string }[] = [
   { id: '1d', label: 'روز' },
 ];
 
-const INITIAL_VISIBLE = 50;
-const TOTAL_CANDLES = 200;
-const PLAY_INTERVAL_MS = 600;
-
-// =========================================================
-// TYPES
-// =========================================================
-
-type BacktestTrade = {
-  id: string;
-  direction: 'buy' | 'sell';
-  entryIndex: number;
-  entryPrice: number;
-  stopLoss: number;
-  takeProfit: number;
-  exitIndex?: number;
-  exitPrice?: number;
-  result?: number;
-  outcome?: 'win' | 'loss' | 'open';
-};
-
-// =========================================================
-// BUILD HTML (Lightweight Charts)
-// =========================================================
-
-const buildBacktestHTML = (isDark: boolean): string => {
-  const bg = isDark ? '#050505' : '#F8FAFC';
-  const gridColor = isDark ? '#1E293B' : '#E2E8F0';
-  const textColor = isDark ? '#94A3B8' : '#64748B';
-
-  return `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; background: ${bg}; overflow: hidden; font-family: -apple-system, sans-serif; }
-    #chart { width: 100%; height: 100%; }
-  </style>
-</head>
-<body>
-  <div id="chart"></div>
-  <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
-  <script>
-    const chart = LightweightCharts.createChart(document.getElementById('chart'), {
-      width: window.innerWidth,
-      height: window.innerHeight,
-      layout: {
-        background: { color: '${bg}' },
-        textColor: '${textColor}',
-        fontSize: 11,
-      },
-      grid: {
-        vertLines: { color: '${gridColor}' },
-        horzLines: { color: '${gridColor}' },
-      },
-      rightPriceScale: { borderColor: '${gridColor}' },
-      timeScale: { borderColor: '${gridColor}', timeVisible: true },
-      crosshair: { mode: 0 },
-    });
-
-    const candleSeries = chart.addCandlestickSeries({
-      upColor: '#16A34A',
-      downColor: '#DC2626',
-      borderUpColor: '#16A34A',
-      borderDownColor: '#DC2626',
-      wickUpColor: '#16A34A',
-      wickDownColor: '#DC2626',
-    });
-
-    window.addEventListener('resize', () => {
-      chart.applyOptions({
-        width: window.innerWidth,
-        height: window.innerHeight,
-      });
-    });
-
-    window.setCandles = function(candles) {
-      const formatted = candles.map(c => ({
-        time: Math.floor(c.timestamp / 1000),
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
-      }));
-      candleSeries.setData(formatted);
-    };
-
-    window.setMarkers = function(markers) {
-      candleSeries.setMarkers(markers || []);
-    };
-
-    window.fitContent = function() {
-      chart.timeScale().fitContent();
-    };
-
-    // Initial empty
-    candleSeries.setData([]);
-  </script>
-</body>
-</html>
-  `;
-};
+const INITIAL_VISIBLE = 100;
+const TOTAL_CANDLES = 1000;
+const PLAY_INTERVAL_MS = 300;
 
 // =========================================================
 // MAIN
@@ -164,17 +76,26 @@ export default function BacktestScreen() {
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
   const [isPlaying, setIsPlaying] = useState(false);
   const [trades, setTrades] = useState<BacktestTrade[]>([]);
-  const [atrMultiple, setAtrMultiple] = useState('1.5');
-  const [riskReward, setRiskReward] = useState('2');
+  const [settings, setSettings] = useState<BacktestSettings>(DEFAULT_SETTINGS);
+
+  const [showSettings, setShowSettings] = useState(false);
+  const [showEquity, setShowEquity] = useState(false);
+  const [settingsForm, setSettingsForm] = useState<BacktestSettings>(DEFAULT_SETTINGS);
 
   const webViewRef = useRef<WebView>(null);
+  const equityViewRef = useRef<WebView>(null);
   const playTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const html = useMemo(() => buildBacktestHTML(isDark), [isDark]);
-  const webViewKey = isDark ? 'dark' : 'light';
+  const chartHTML = useMemo(() => buildBacktestChartHTML(isDark), [isDark]);
+  const equityHTML = useMemo(() => buildEquityCurveHTML(isDark), [isDark]);
+  const chartKey = isDark ? 'c-dark' : 'c-light';
+  const equityKey = isDark ? 'e-dark' : 'e-light';
+
+  const [chartReady, setChartReady] = useState(false);
+  const [equityReady, setEquityReady] = useState(false);
 
   // =========================================================
-  // LOAD CANDLES
+  // LOAD DATA
   // =========================================================
 
   const loadData = useCallback(async () => {
@@ -203,45 +124,78 @@ export default function BacktestScreen() {
   }, [loadData]);
 
   // =========================================================
-  // SEND DATA TO WEBVIEW
+  // SEND CANDLES + MARKERS TO WEBVIEW
   // =========================================================
 
-  const sendDataToWebView = useCallback(() => {
-    if (!webViewRef.current || candles.length === 0) return;
+  const sendToChart = useCallback(() => {
+    if (!webViewRef.current || candles.length === 0 || !chartReady) return;
 
     const visible = candles.slice(0, visibleCount);
-    const candlesScript = `window.setCandles(${JSON.stringify(visible)}); true;`;
-    webViewRef.current.injectJavaScript(candlesScript);
 
-    // Build markers for closed/open trades
-    const markers = trades.map((t) => ({
-      time: Math.floor(candles[t.entryIndex].timestamp / 1000),
-      position: t.direction === 'buy' ? 'belowBar' : 'aboveBar',
-      color: t.direction === 'buy' ? '#16A34A' : '#DC2626',
-      shape: t.direction === 'buy' ? 'arrowUp' : 'arrowDown',
-      text: t.direction === 'buy' ? 'BUY' : 'SELL',
-    }));
+    webViewRef.current.injectJavaScript(
+      `window.setCandles(${JSON.stringify(visible)}); true;`
+    );
 
+    // Markers
+    const markers: any[] = [];
     trades.forEach((t) => {
-      if (t.exitIndex !== undefined) {
+      if (t.entryIndex < visibleCount) {
+        markers.push({
+          time: Math.floor(candles[t.entryIndex].timestamp / 1000),
+          position: t.direction === 'buy' ? 'belowBar' : 'aboveBar',
+          color: t.direction === 'buy' ? GREEN : RED,
+          shape: t.direction === 'buy' ? 'arrowUp' : 'arrowDown',
+          text: t.direction === 'buy' ? 'B' : 'S',
+        });
+      }
+      if (t.exitIndex !== undefined && t.exitIndex < visibleCount) {
         markers.push({
           time: Math.floor(candles[t.exitIndex].timestamp / 1000),
           position: t.outcome === 'win' ? 'aboveBar' : 'belowBar',
-          color: t.outcome === 'win' ? '#16A34A' : '#DC2626',
+          color: t.outcome === 'win' ? GREEN : RED,
           shape: 'circle',
-          text: t.outcome === 'win' ? 'WIN' : 'LOSS',
-        } as any);
+          text: t.outcome === 'win' ? '✓' : '✗',
+        });
       }
     });
+    markers.sort((a, b) => a.time - b.time);
 
-    const markersScript = `window.setMarkers(${JSON.stringify(markers)}); true;`;
-    webViewRef.current.injectJavaScript(markersScript);
-    webViewRef.current.injectJavaScript('window.fitContent(); true;');
-  }, [candles, visibleCount, trades]);
+    webViewRef.current.injectJavaScript(
+      `window.setMarkers(${JSON.stringify(markers)}); true;`
+    );
+
+    // Stop loss line for open trade
+    const openTrade = trades.find((t) => t.outcome === 'open');
+    if (openTrade) {
+      webViewRef.current.injectJavaScript(
+        `window.setStopLine(${openTrade.currentStopLoss}); true;`
+      );
+    } else {
+      webViewRef.current.injectJavaScript('window.clearStopLine(); true;');
+    }
+  }, [candles, visibleCount, trades, chartReady]);
 
   useEffect(() => {
-    sendDataToWebView();
-  }, [sendDataToWebView]);
+    sendToChart();
+  }, [sendToChart]);
+
+  // =========================================================
+  // SEND EQUITY CURVE
+  // =========================================================
+
+  const stats = useMemo(
+    () => calcStats(trades, candles, settings.capital),
+    [trades, candles, settings.capital]
+  );
+
+  useEffect(() => {
+    if (!equityViewRef.current || !equityReady) return;
+    if (stats.equityCurve.length === 0) return;
+
+    equityViewRef.current.injectJavaScript(
+      `window.setEquity(${JSON.stringify(stats.equityCurve)}); true;`
+    );
+  }, [stats.equityCurve, equityReady]);
 
   // =========================================================
   // PLAY LOOP
@@ -275,29 +229,7 @@ export default function BacktestScreen() {
   }, [isPlaying, candles.length]);
 
   // =========================================================
-  // ATR CALC
-  // =========================================================
-
-  const calcATR = (upTo: number): number => {
-    const period = 14;
-    if (upTo < period) return 0;
-    const slice = candles.slice(upTo - period, upTo);
-    const trs: number[] = [];
-    for (let i = 1; i < slice.length; i++) {
-      const c = slice[i];
-      const prev = slice[i - 1];
-      const tr = Math.max(
-        c.high - c.low,
-        Math.abs(c.high - prev.close),
-        Math.abs(c.low - prev.close)
-      );
-      trs.push(tr);
-    }
-    return trs.length ? trs.reduce((a, b) => a + b, 0) / trs.length : 0;
-  };
-
-  // =========================================================
-  // CHECK TRADE EXITS
+  // PROCESS TRADE EXITS ON NEW CANDLE
   // =========================================================
 
   useEffect(() => {
@@ -310,48 +242,13 @@ export default function BacktestScreen() {
     setTrades((prev) =>
       prev.map((t) => {
         if (t.outcome !== 'open') return t;
-
-        let exitPrice: number | undefined;
-        let outcome: 'win' | 'loss' | undefined;
-
-        if (t.direction === 'buy') {
-          if (currentCandle.low <= t.stopLoss) {
-            exitPrice = t.stopLoss;
-            outcome = 'loss';
-          } else if (currentCandle.high >= t.takeProfit) {
-            exitPrice = t.takeProfit;
-            outcome = 'win';
-          }
-        } else {
-          if (currentCandle.high >= t.stopLoss) {
-            exitPrice = t.stopLoss;
-            outcome = 'loss';
-          } else if (currentCandle.low <= t.takeProfit) {
-            exitPrice = t.takeProfit;
-            outcome = 'win';
-          }
-        }
-
-        if (!exitPrice || !outcome) return t;
-
-        const result =
-          t.direction === 'buy'
-            ? exitPrice - t.entryPrice
-            : t.entryPrice - exitPrice;
-
-        return {
-          ...t,
-          exitIndex: idx,
-          exitPrice,
-          result,
-          outcome,
-        };
+        return processTrade(t, currentCandle, idx, settings);
       })
     );
-  }, [visibleCount, candles]);
+  }, [visibleCount, candles, settings]);
 
   // =========================================================
-  // HANDLE TRADE
+  // HANDLERS
   // =========================================================
 
   const handleTrade = (direction: 'buy' | 'sell') => {
@@ -365,32 +262,14 @@ export default function BacktestScreen() {
       return;
     }
 
-    const atr = calcATR(idx + 1);
-    const entryPrice = candle.close;
-    const risk = atr * (parseFloat(atrMultiple) || 1.5) || entryPrice * 0.005;
-    const rr = parseFloat(riskReward) || 2;
-
-    const stopLoss =
-      direction === 'buy' ? entryPrice - risk : entryPrice + risk;
-    const takeProfit =
-      direction === 'buy' ? entryPrice + risk * rr : entryPrice - risk * rr;
-
-    const trade: BacktestTrade = {
-      id: `bt-${Date.now()}`,
-      direction,
-      entryIndex: idx,
-      entryPrice,
-      stopLoss,
-      takeProfit,
-      outcome: 'open',
-    };
+    const trade = createTrade(candle, idx, direction, candles, settings);
+    if (!trade) {
+      Alert.alert('خطا', 'ATR قابل محاسبه نیست. چند کندل بیشتر جلو برو.');
+      return;
+    }
 
     setTrades((prev) => [trade, ...prev]);
   };
-
-  // =========================================================
-  // CONTROLS
-  // =========================================================
 
   const togglePlay = () => {
     if (visibleCount >= candles.length) return;
@@ -400,6 +279,12 @@ export default function BacktestScreen() {
   const stepForward = () => {
     if (visibleCount < candles.length) {
       setVisibleCount((c) => c + 1);
+    }
+  };
+
+  const stepForward5 = () => {
+    if (visibleCount < candles.length) {
+      setVisibleCount((c) => Math.min(c + 5, candles.length));
     }
   };
 
@@ -418,33 +303,21 @@ export default function BacktestScreen() {
     ]);
   };
 
-  // =========================================================
-  // STATS
-  // =========================================================
-
-  const stats = useMemo(() => {
-    const closed = trades.filter((t) => t.outcome !== 'open');
-    const wins = closed.filter((t) => t.outcome === 'win').length;
-    const losses = closed.filter((t) => t.outcome === 'loss').length;
-    const totalR = closed.reduce((sum, t) => {
-      const risk = Math.abs(t.entryPrice - t.stopLoss);
-      if (risk === 0 || t.result === undefined) return sum;
-      return sum + t.result / risk;
-    }, 0);
-
-    const winRate = closed.length > 0 ? (wins / closed.length) * 100 : 0;
-    const avgR = closed.length > 0 ? totalR / closed.length : 0;
-
-    return { total: closed.length, wins, losses, winRate, totalR, avgR };
-  }, [trades]);
-
-  const lastCandle = candles[visibleCount - 1];
-  const openTrade = trades.find((t) => t.outcome === 'open');
-  const progress = candles.length ? (visibleCount / candles.length) * 100 : 0;
+  const saveSettings = () => {
+    setSettings(settingsForm);
+    setShowSettings(false);
+    setTrades([]);
+    setVisibleCount(INITIAL_VISIBLE);
+    setIsPlaying(false);
+  };
 
   // =========================================================
   // RENDER
   // =========================================================
+
+  const lastCandle = candles[visibleCount - 1];
+  const openTrade = trades.find((t) => t.outcome === 'open');
+  const progress = candles.length ? (visibleCount / candles.length) * 100 : 0;
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
@@ -453,7 +326,7 @@ export default function BacktestScreen() {
         <TouchableOpacity
           onPress={() => router.back()}
           style={[
-            styles.backBtn,
+            styles.iconBtn,
             { backgroundColor: colors.card, borderColor: colors.border },
           ]}
         >
@@ -461,20 +334,22 @@ export default function BacktestScreen() {
         </TouchableOpacity>
 
         <View style={{ flex: 1, alignItems: 'center' }}>
-          <Text style={[styles.title, { color: colors.text }]}>بک‌تست</Text>
+          <Text style={[styles.title, { color: colors.text }]}>
+            بک‌تست حرفه‌ای
+          </Text>
           <Text style={[styles.subtitle, { color: colors.mutedText }]}>
-            {symbol} • {timeframe}
+            {symbol} • {timeframe} • {candles.length} کندل
           </Text>
         </View>
 
         <TouchableOpacity
-          onPress={resetSession}
+          onPress={() => setShowSettings(true)}
           style={[
-            styles.backBtn,
+            styles.iconBtn,
             { backgroundColor: colors.card, borderColor: colors.border },
           ]}
         >
-          <Ionicons name="refresh" size={20} color={colors.text} />
+          <Ionicons name="options-outline" size={20} color={colors.text} />
         </TouchableOpacity>
       </View>
 
@@ -565,16 +440,16 @@ export default function BacktestScreen() {
           ) : (
             <WebView
               ref={webViewRef}
-              key={webViewKey}
+              key={chartKey}
               originWhitelist={['*']}
-              source={{ html }}
+              source={{ html: chartHTML }}
               style={styles.webview}
               javaScriptEnabled
               domStorageEnabled
               scrollEnabled={false}
               bounces={false}
               overScrollMode="never"
-              onLoadEnd={sendDataToWebView}
+              onLoadEnd={() => setChartReady(true)}
             />
           )}
         </View>
@@ -592,72 +467,82 @@ export default function BacktestScreen() {
             />
           </View>
           <Text style={[styles.progressText, { color: colors.mutedText }]}>
-            کندل {visibleCount} از {candles.length}
+            کندل {visibleCount} از {candles.length} ({progress.toFixed(0)}%)
           </Text>
         </View>
 
-        {/* CURRENT PRICE + OPEN TRADE */}
+        {/* LIVE STATS BAR */}
         {lastCandle && (
           <View
             style={[
-              styles.infoCard,
+              styles.liveStatsBar,
               { backgroundColor: colors.card, borderColor: colors.border },
             ]}
           >
-            <View style={styles.infoRow}>
-              <View style={styles.infoCol}>
-                <Text style={[styles.infoLabel, { color: colors.mutedText }]}>
-                  قیمت
-                </Text>
-                <Text style={[styles.infoValue, { color: colors.text }]}>
-                  {lastCandle.close.toFixed(2)}
-                </Text>
-              </View>
-              {openTrade && (
-                <>
-                  <View style={styles.infoCol}>
-                    <Text style={[styles.infoLabel, { color: colors.mutedText }]}>
-                      معامله
-                    </Text>
-                    <Text
-                      style={[
-                        styles.infoValue,
-                        {
-                          color:
-                            openTrade.direction === 'buy' ? GREEN : RED,
-                        },
-                      ]}
-                    >
-                      {openTrade.direction === 'buy' ? 'BUY' : 'SELL'}
-                    </Text>
-                  </View>
-                  <View style={styles.infoCol}>
-                    <Text style={[styles.infoLabel, { color: colors.mutedText }]}>
-                      ورود
-                    </Text>
-                    <Text style={[styles.infoValue, { color: colors.text }]}>
-                      {openTrade.entryPrice.toFixed(2)}
-                    </Text>
-                  </View>
-                  <View style={styles.infoCol}>
-                    <Text style={[styles.infoLabel, { color: colors.mutedText }]}>
-                      SL
-                    </Text>
-                    <Text style={[styles.infoValue, { color: RED }]}>
-                      {openTrade.stopLoss.toFixed(2)}
-                    </Text>
-                  </View>
-                  <View style={styles.infoCol}>
-                    <Text style={[styles.infoLabel, { color: colors.mutedText }]}>
-                      TP
-                    </Text>
-                    <Text style={[styles.infoValue, { color: GREEN }]}>
-                      {openTrade.takeProfit.toFixed(2)}
-                    </Text>
-                  </View>
-                </>
-              )}
+            <View style={styles.liveStatItem}>
+              <Text style={[styles.liveStatLabel, { color: colors.mutedText }]}>
+                قیمت
+              </Text>
+              <Text style={[styles.liveStatValue, { color: colors.text }]}>
+                {lastCandle.close.toFixed(lastCandle.close > 100 ? 2 : 4)}
+              </Text>
             </View>
+
+            {openTrade && (
+              <>
+                <View style={styles.liveStatDivider} />
+                <View style={styles.liveStatItem}>
+                  <Text
+                    style={[styles.liveStatLabel, { color: colors.mutedText }]}
+                  >
+                    معامله
+                  </Text>
+                  <Text
+                    style={[
+                      styles.liveStatValue,
+                      {
+                        color: openTrade.direction === 'buy' ? GREEN : RED,
+                      },
+                    ]}
+                  >
+                    {openTrade.direction === 'buy' ? 'BUY' : 'SELL'}
+                  </Text>
+                </View>
+                <View style={styles.liveStatDivider} />
+                <View style={styles.liveStatItem}>
+                  <Text
+                    style={[styles.liveStatLabel, { color: colors.mutedText }]}
+                  >
+                    ورود
+                  </Text>
+                  <Text style={[styles.liveStatValue, { color: colors.text }]}>
+                    {openTrade.entryPrice.toFixed(
+                      openTrade.entryPrice > 100 ? 2 : 4
+                    )}
+                  </Text>
+                </View>
+                <View style={styles.liveStatDivider} />
+                <View style={styles.liveStatItem}>
+                  <Text
+                    style={[styles.liveStatLabel, { color: colors.mutedText }]}
+                  >
+                    SL
+                  </Text>
+                  <Text
+                    style={[styles.liveStatValue, { color: RED, fontSize: 11 }]}
+                  >
+                    {openTrade.currentStopLoss.toFixed(
+                      openTrade.currentStopLoss > 100 ? 2 : 4
+                    )}
+                  </Text>
+                </View>
+                {openTrade.breakEvenTriggered && (
+                  <View style={styles.beBadge}>
+                    <Text style={styles.beBadgeText}>BE</Text>
+                  </View>
+                )}
+              </>
+            )}
           </View>
         )}
 
@@ -676,11 +561,28 @@ export default function BacktestScreen() {
               },
             ]}
           >
-            <Ionicons
-              name="play-skip-forward"
-              size={20}
-              color={colors.text}
-            />
+            <Ionicons name="play-skip-forward" size={18} color={colors.text} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={stepForward5}
+            disabled={visibleCount >= candles.length || isPlaying}
+            style={[
+              styles.controlBtn,
+              {
+                backgroundColor: colors.card,
+                borderColor: colors.border,
+                opacity:
+                  visibleCount >= candles.length || isPlaying ? 0.4 : 1,
+              },
+            ]}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Ionicons name="play-skip-forward" size={14} color={colors.text} />
+              <Text style={{ fontSize: 9, fontWeight: '900', color: colors.text, marginLeft: 2 }}>
+                ×5
+              </Text>
+            </View>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -699,17 +601,29 @@ export default function BacktestScreen() {
           </TouchableOpacity>
 
           <TouchableOpacity
-            disabled
+            onPress={() => setVisibleCount(candles.length)}
+            disabled={visibleCount >= candles.length || isPlaying}
             style={[
               styles.controlBtn,
               {
                 backgroundColor: colors.card,
                 borderColor: colors.border,
-                opacity: 0.4,
+                opacity:
+                  visibleCount >= candles.length || isPlaying ? 0.4 : 1,
               },
             ]}
           >
-            <Ionicons name="stats-chart" size={20} color={colors.text} />
+            <Ionicons name="play-forward" size={18} color={colors.text} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={resetSession}
+            style={[
+              styles.controlBtn,
+              { backgroundColor: colors.card, borderColor: colors.border },
+            ]}
+          >
+            <Ionicons name="refresh" size={18} color={colors.text} />
           </TouchableOpacity>
         </View>
 
@@ -754,112 +668,143 @@ export default function BacktestScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* SETTINGS */}
-        <View
-          style={[
-            styles.settingsCard,
-            { backgroundColor: colors.card, borderColor: colors.border },
-          ]}
-        >
-          <View style={styles.settingsRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.settingLabel, { color: colors.mutedText }]}>
-                ATR ×
-              </Text>
-              <TextInput
-                value={atrMultiple}
-                onChangeText={setAtrMultiple}
-                keyboardType="decimal-pad"
-                style={[
-                  styles.settingInput,
-                  {
-                    backgroundColor: colors.input,
-                    borderColor: colors.border,
-                    color: colors.text,
-                  },
-                ]}
-              />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.settingLabel, { color: colors.mutedText }]}>
-                R:R
-              </Text>
-              <TextInput
-                value={riskReward}
-                onChangeText={setRiskReward}
-                keyboardType="decimal-pad"
-                style={[
-                  styles.settingInput,
-                  {
-                    backgroundColor: colors.input,
-                    borderColor: colors.border,
-                    color: colors.text,
-                  },
-                ]}
-              />
-            </View>
-          </View>
-        </View>
-
-        {/* STATS */}
+        {/* STATS CARDS */}
         {stats.total > 0 && (
-          <View
-            style={[
-              styles.statsCard,
-              { backgroundColor: colors.card, borderColor: BLUE },
-            ]}
-          >
-            <Text style={[styles.statsTitle, { color: colors.text }]}>
-              نتایج تا این لحظه
-            </Text>
+          <>
+            <View style={styles.sectionTitleRow}>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>
+                آمار حرفه‌ای
+              </Text>
+              <TouchableOpacity onPress={() => setShowEquity(true)}>
+                <Text style={[styles.sectionLink, { color: BLUE }]}>
+                  منحنی سرمایه
+                </Text>
+              </TouchableOpacity>
+            </View>
+
             <View style={styles.statsGrid}>
-              <View style={styles.statItem}>
-                <Text style={[styles.statValue, { color: colors.text }]}>
-                  {stats.total}
+              <StatCard
+                label="معاملات"
+                value={String(stats.total)}
+                color={colors.text}
+                bg={colors.card}
+                border={colors.border}
+                mutedColor={colors.mutedText}
+              />
+              <StatCard
+                label="وین‌ریت"
+                value={`${stats.winRate.toFixed(1)}%`}
+                color={stats.winRate >= 50 ? GREEN : AMBER}
+                bg={colors.card}
+                border={colors.border}
+                mutedColor={colors.mutedText}
+              />
+              <StatCard
+                label="سود/زیان"
+                value={`${stats.totalPnL >= 0 ? '+' : ''}$${stats.totalPnL.toFixed(2)}`}
+                color={stats.totalPnL >= 0 ? GREEN : RED}
+                bg={colors.card}
+                border={colors.border}
+                mutedColor={colors.mutedText}
+              />
+              <StatCard
+                label="میانگین R"
+                value={`${stats.avgR >= 0 ? '+' : ''}${stats.avgR.toFixed(2)}R`}
+                color={stats.avgR >= 0 ? GREEN : RED}
+                bg={colors.card}
+                border={colors.border}
+                mutedColor={colors.mutedText}
+              />
+              <StatCard
+                label="Profit Factor"
+                value={stats.profitFactor.toFixed(2)}
+                color={stats.profitFactor >= 1.5 ? GREEN : AMBER}
+                bg={colors.card}
+                border={colors.border}
+                mutedColor={colors.mutedText}
+              />
+              <StatCard
+                label="Sharpe"
+                value={stats.sharpe.toFixed(2)}
+                color={stats.sharpe >= 1 ? GREEN : AMBER}
+                bg={colors.card}
+                border={colors.border}
+                mutedColor={colors.mutedText}
+              />
+              <StatCard
+                label="Sortino"
+                value={stats.sortino.toFixed(2)}
+                color={stats.sortino >= 1 ? GREEN : AMBER}
+                bg={colors.card}
+                border={colors.border}
+                mutedColor={colors.mutedText}
+              />
+              <StatCard
+                label="Max DD"
+                value={`${stats.maxDrawdownPercent.toFixed(1)}%`}
+                color={stats.maxDrawdownPercent > 20 ? RED : AMBER}
+                bg={colors.card}
+                border={colors.border}
+                mutedColor={colors.mutedText}
+              />
+            </View>
+
+            <View
+              style={[
+                styles.summaryCard,
+                { backgroundColor: colors.card, borderColor: colors.border },
+              ]}
+            >
+              <View style={styles.summaryRow}>
+                <Text style={[styles.summaryLabel, { color: colors.mutedText }]}>
+                  میانگین برد
                 </Text>
-                <Text style={[styles.statLabel, { color: colors.mutedText }]}>
-                  معامله
+                <Text style={[styles.summaryValue, { color: GREEN }]}>
+                  +${stats.avgWin.toFixed(2)}
                 </Text>
               </View>
-              <View style={styles.statItem}>
-                <Text style={[styles.statValue, { color: GREEN }]}>
-                  {stats.wins}
+              <View style={styles.summaryRow}>
+                <Text style={[styles.summaryLabel, { color: colors.mutedText }]}>
+                  میانگین باخت
                 </Text>
-                <Text style={[styles.statLabel, { color: colors.mutedText }]}>
-                  برد
-                </Text>
-              </View>
-              <View style={styles.statItem}>
-                <Text style={[styles.statValue, { color: RED }]}>
-                  {stats.losses}
-                </Text>
-                <Text style={[styles.statLabel, { color: colors.mutedText }]}>
-                  باخت
+                <Text style={[styles.summaryValue, { color: RED }]}>
+                  -${stats.avgLoss.toFixed(2)}
                 </Text>
               </View>
-              <View style={styles.statItem}>
-                <Text style={[styles.statValue, { color: BLUE }]}>
-                  {stats.winRate.toFixed(0)}%
+              <View style={styles.summaryRow}>
+                <Text style={[styles.summaryLabel, { color: colors.mutedText }]}>
+                  بزرگ‌ترین برد
                 </Text>
-                <Text style={[styles.statLabel, { color: colors.mutedText }]}>
-                  وین‌ریت
+                <Text style={[styles.summaryValue, { color: GREEN }]}>
+                  +${stats.largestWin.toFixed(2)}
                 </Text>
               </View>
-              <View style={styles.statItem}>
-                <Text
-                  style={[
-                    styles.statValue,
-                    { color: stats.avgR >= 0 ? GREEN : RED },
-                  ]}
-                >
-                  {stats.avgR.toFixed(2)}R
+              <View style={styles.summaryRow}>
+                <Text style={[styles.summaryLabel, { color: colors.mutedText }]}>
+                  بزرگ‌ترین باخت
                 </Text>
-                <Text style={[styles.statLabel, { color: colors.mutedText }]}>
-                  میانگین R
+                <Text style={[styles.summaryValue, { color: RED }]}>
+                  ${stats.largestLoss.toFixed(2)}
+                </Text>
+              </View>
+              <View style={styles.summaryRow}>
+                <Text style={[styles.summaryLabel, { color: colors.mutedText }]}>
+                  بهترین زنجیره برد
+                </Text>
+                <Text style={[styles.summaryValue, { color: GREEN }]}>
+                  {stats.maxWinStreak}
+                </Text>
+              </View>
+              <View style={styles.summaryRow}>
+                <Text style={[styles.summaryLabel, { color: colors.mutedText }]}>
+                  بدترین زنجیره باخت
+                </Text>
+                <Text style={[styles.summaryValue, { color: RED }]}>
+                  {stats.maxLossStreak}
                 </Text>
               </View>
             </View>
-          </View>
+          </>
         )}
 
         {/* TRADES LOG */}
@@ -873,7 +818,7 @@ export default function BacktestScreen() {
             <Text style={[styles.logTitle, { color: colors.text }]}>
               معاملات ({trades.length})
             </Text>
-            {trades.slice(0, 10).map((t) => {
+            {trades.slice(0, 15).map((t) => {
               const isWin = t.outcome === 'win';
               const isLoss = t.outcome === 'loss';
               const isOpen = t.outcome === 'open';
@@ -899,14 +844,18 @@ export default function BacktestScreen() {
                       color={t.direction === 'buy' ? GREEN : RED}
                     />
                   </View>
-                  <Text style={[styles.logPair, { color: colors.text }]}>
-                    {t.direction === 'buy' ? 'BUY' : 'SELL'}
-                  </Text>
-                  <Text
-                    style={[styles.logPrice, { color: colors.mutedText }]}
-                  >
-                    {t.entryPrice.toFixed(2)}
-                  </Text>
+
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.logPair, { color: colors.text }]}>
+                      {t.direction === 'buy' ? 'BUY' : 'SELL'} @ {t.entryPrice.toFixed(2)}
+                    </Text>
+                    <Text style={[styles.logMeta, { color: colors.mutedText }]}>
+                      {t.breakEvenTriggered ? '🎯 BE ' : ''}
+                      {t.stages.filter((s) => s.hit).length}/
+                      {t.stages.length} TP
+                    </Text>
+                  </View>
+
                   <View
                     style={[
                       styles.logOutcome,
@@ -930,6 +879,7 @@ export default function BacktestScreen() {
                       {isWin ? 'WIN' : isLoss ? 'LOSS' : 'OPEN'}
                     </Text>
                   </View>
+
                   {t.result !== undefined && (
                     <Text
                       style={[
@@ -937,8 +887,7 @@ export default function BacktestScreen() {
                         { color: isWin ? GREEN : RED },
                       ]}
                     >
-                      {t.result >= 0 ? '+' : ''}
-                      {t.result.toFixed(2)}
+                      {t.result >= 0 ? '+' : ''}${t.result.toFixed(1)}
                     </Text>
                   )}
                 </View>
@@ -949,6 +898,352 @@ export default function BacktestScreen() {
 
         <View style={{ height: 100 }} />
       </ScrollView>
+
+      {/* SETTINGS MODAL */}
+      <Modal
+        visible={showSettings}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowSettings(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View
+            style={[
+              styles.settingsModal,
+              { backgroundColor: isDark ? '#0F172A' : '#FFFFFF' },
+            ]}
+          >
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>
+                تنظیمات بک‌تست
+              </Text>
+              <TouchableOpacity onPress={() => setShowSettings(false)}>
+                <Ionicons name="close" size={24} color={colors.mutedText} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {/* CAPITAL */}
+              <Text style={[styles.fieldLabel, { color: colors.mutedText }]}>
+                سرمایه اولیه ($)
+              </Text>
+              <TextInput
+                value={String(settingsForm.capital)}
+                onChangeText={(v) =>
+                  setSettingsForm({ ...settingsForm, capital: parseFloat(v) || 0 })
+                }
+                keyboardType="decimal-pad"
+                style={[
+                  styles.input,
+                  {
+                    backgroundColor: colors.input,
+                    borderColor: colors.border,
+                    color: colors.text,
+                  },
+                ]}
+              />
+
+              {/* RISK */}
+              <Text style={[styles.fieldLabel, { color: colors.mutedText }]}>
+                ریسک هر معامله (%)
+              </Text>
+              <TextInput
+                value={String(settingsForm.riskPerTrade)}
+                onChangeText={(v) =>
+                  setSettingsForm({
+                    ...settingsForm,
+                    riskPerTrade: parseFloat(v) || 0,
+                  })
+                }
+                keyboardType="decimal-pad"
+                style={[
+                  styles.input,
+                  {
+                    backgroundColor: colors.input,
+                    borderColor: colors.border,
+                    color: colors.text,
+                  },
+                ]}
+              />
+
+              {/* ATR */}
+              <Text style={[styles.fieldLabel, { color: colors.mutedText }]}>
+                ATR × (برای حد ضرر)
+              </Text>
+              <TextInput
+                value={String(settingsForm.atrMultiple)}
+                onChangeText={(v) =>
+                  setSettingsForm({
+                    ...settingsForm,
+                    atrMultiple: parseFloat(v) || 1.5,
+                  })
+                }
+                keyboardType="decimal-pad"
+                style={[
+                  styles.input,
+                  {
+                    backgroundColor: colors.input,
+                    borderColor: colors.border,
+                    color: colors.text,
+                  },
+                ]}
+              />
+
+              {/* RR */}
+              <Text style={[styles.fieldLabel, { color: colors.mutedText }]}>
+                R:R (هدف نهایی)
+              </Text>
+              <TextInput
+                value={String(settingsForm.initialRR)}
+                onChangeText={(v) =>
+                  setSettingsForm({
+                    ...settingsForm,
+                    initialRR: parseFloat(v) || 3,
+                  })
+                }
+                keyboardType="decimal-pad"
+                style={[
+                  styles.input,
+                  {
+                    backgroundColor: colors.input,
+                    borderColor: colors.border,
+                    color: colors.text,
+                  },
+                ]}
+              />
+
+              {/* MULTI TP */}
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.toggleLabel, { color: colors.text }]}>
+                    Multi-Stage Take Profit
+                  </Text>
+                  <Text style={[styles.toggleSub, { color: colors.mutedText }]}>
+                    بستن تدریجی پوزیشن در ۳ مرحله (1R, 2R, RR)
+                  </Text>
+                </View>
+                <Switch
+                  value={settingsForm.enableMultiTP}
+                  onValueChange={(v) =>
+                    setSettingsForm({ ...settingsForm, enableMultiTP: v })
+                  }
+                  trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                  thumbColor={settingsForm.enableMultiTP ? BLUE : '#FFFFFF'}
+                />
+              </View>
+
+              {/* BREAKEVEN */}
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.toggleLabel, { color: colors.text }]}>
+                    Breakeven Stop
+                  </Text>
+                  <Text style={[styles.toggleSub, { color: colors.mutedText }]}>
+                    انتقال SL به نقطه ورود در سود مشخص
+                  </Text>
+                </View>
+                <Switch
+                  value={settingsForm.enableBreakeven}
+                  onValueChange={(v) =>
+                    setSettingsForm({ ...settingsForm, enableBreakeven: v })
+                  }
+                  trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                  thumbColor={settingsForm.enableBreakeven ? BLUE : '#FFFFFF'}
+                />
+              </View>
+
+              {settingsForm.enableBreakeven && (
+                <>
+                  <Text style={[styles.fieldLabel, { color: colors.mutedText }]}>
+                    Breakeven در چند R؟
+                  </Text>
+                  <TextInput
+                    value={String(settingsForm.breakevenAtR)}
+                    onChangeText={(v) =>
+                      setSettingsForm({
+                        ...settingsForm,
+                        breakevenAtR: parseFloat(v) || 1,
+                      })
+                    }
+                    keyboardType="decimal-pad"
+                    style={[
+                      styles.input,
+                      {
+                        backgroundColor: colors.input,
+                        borderColor: colors.border,
+                        color: colors.text,
+                      },
+                    ]}
+                  />
+                </>
+              )}
+
+              {/* TRAILING */}
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.toggleLabel, { color: colors.text }]}>
+                    Trailing Stop
+                  </Text>
+                  <Text style={[styles.toggleSub, { color: colors.mutedText }]}>
+                    حد ضرر متحرک با حرکت قیمت
+                  </Text>
+                </View>
+                <Switch
+                  value={settingsForm.enableTrailing}
+                  onValueChange={(v) =>
+                    setSettingsForm({ ...settingsForm, enableTrailing: v })
+                  }
+                  trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                  thumbColor={settingsForm.enableTrailing ? BLUE : '#FFFFFF'}
+                />
+              </View>
+
+              {settingsForm.enableTrailing && (
+                <>
+                  <Text style={[styles.fieldLabel, { color: colors.mutedText }]}>
+                    Trailing ATR ×
+                  </Text>
+                  <TextInput
+                    value={String(settingsForm.trailingATR)}
+                    onChangeText={(v) =>
+                      setSettingsForm({
+                        ...settingsForm,
+                        trailingATR: parseFloat(v) || 1,
+                      })
+                    }
+                    keyboardType="decimal-pad"
+                    style={[
+                      styles.input,
+                      {
+                        backgroundColor: colors.input,
+                        borderColor: colors.border,
+                        color: colors.text,
+                      },
+                    ]}
+                  />
+                </>
+              )}
+
+              <TouchableOpacity
+                onPress={saveSettings}
+                style={[styles.saveBtn, { backgroundColor: BLUE }]}
+              >
+                <Ionicons name="checkmark" size={20} color="#FFF" />
+                <Text style={styles.saveBtnText}>ذخیره و شروع مجدد</Text>
+              </TouchableOpacity>
+
+              <View style={{ height: 30 }} />
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* EQUITY CURVE MODAL */}
+      <Modal
+        visible={showEquity}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowEquity(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View
+            style={[
+              styles.equityModal,
+              { backgroundColor: isDark ? '#0F172A' : '#FFFFFF' },
+            ]}
+          >
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>
+                منحنی رشد سرمایه
+              </Text>
+              <TouchableOpacity onPress={() => setShowEquity(false)}>
+                <Ionicons name="close" size={24} color={colors.mutedText} />
+              </TouchableOpacity>
+            </View>
+
+            <View
+              style={[
+                styles.equityChartWrap,
+                { backgroundColor: colors.card, borderColor: colors.border },
+              ]}
+            >
+              <WebView
+                ref={equityViewRef}
+                key={equityKey}
+                originWhitelist={['*']}
+                source={{ html: equityHTML }}
+                style={styles.webview}
+                javaScriptEnabled
+                domStorageEnabled
+                scrollEnabled={false}
+                bounces={false}
+                onLoadEnd={() => setEquityReady(true)}
+              />
+            </View>
+
+            <View style={styles.equityInfo}>
+              <View style={styles.equityItem}>
+                <Text style={[styles.equityLabel, { color: colors.mutedText }]}>
+                  سرمایه نهایی
+                </Text>
+                <Text
+                  style={[
+                    styles.equityValue,
+                    {
+                      color:
+                        stats.totalPnL >= 0 ? GREEN : RED,
+                    },
+                  ]}
+                >
+                  ${(settings.capital + stats.totalPnL).toFixed(2)}
+                </Text>
+              </View>
+              <View style={styles.equityItem}>
+                <Text style={[styles.equityLabel, { color: colors.mutedText }]}>
+                  بازدهی
+                </Text>
+                <Text
+                  style={[
+                    styles.equityValue,
+                    {
+                      color: stats.totalPnL >= 0 ? GREEN : RED,
+                    },
+                  ]}
+                >
+                  {((stats.totalPnL / settings.capital) * 100).toFixed(2)}%
+                </Text>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+// =========================================================
+// STAT CARD
+// =========================================================
+
+function StatCard({
+  label,
+  value,
+  color,
+  bg,
+  border,
+  mutedColor,
+}: {
+  label: string;
+  value: string;
+  color: string;
+  bg: string;
+  border: string;
+  mutedColor: string;
+}) {
+  return (
+    <View style={[styles.statCard, { backgroundColor: bg, borderColor: border }]}>
+      <Text style={[styles.statLabel, { color: mutedColor }]}>{label}</Text>
+      <Text style={[styles.statValue, { color }]}>{value}</Text>
     </View>
   );
 }
@@ -968,7 +1263,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     gap: 10,
   },
-  backBtn: {
+  iconBtn: {
     width: 42,
     height: 42,
     borderRadius: 14,
@@ -976,8 +1271,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
   },
-  title: { fontSize: 18, fontWeight: '900' },
-  subtitle: { fontSize: 11, fontWeight: '700', marginTop: 2 },
+  title: { fontSize: 17, fontWeight: '900' },
+  subtitle: { fontSize: 10, fontWeight: '700', marginTop: 2 },
 
   content: { padding: 18, paddingBottom: 30 },
   center: {
@@ -988,7 +1283,7 @@ const styles = StyleSheet.create({
   },
   loadText: { fontSize: 12, fontWeight: '600' },
 
-  pillsRow: { gap: 8, paddingBottom: 12 },
+  pillsRow: { gap: 8, paddingBottom: 10 },
   pill: {
     paddingHorizontal: 14,
     paddingVertical: 8,
@@ -1001,12 +1296,12 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     borderWidth: 1,
     overflow: 'hidden',
-    marginBottom: 14,
-    height: 280,
+    marginBottom: 12,
+    height: 300,
   },
   webview: { flex: 1, backgroundColor: 'transparent' },
 
-  progressWrap: { marginBottom: 14 },
+  progressWrap: { marginBottom: 12 },
   progressTrack: { height: 6, borderRadius: 3, overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 3 },
   progressText: {
@@ -1016,44 +1311,57 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
 
-  infoCard: {
-    borderRadius: 16,
+  liveStatsBar: {
+    flexDirection: 'row',
+    borderRadius: 14,
     borderWidth: 1,
-    padding: 12,
-    marginBottom: 14,
+    padding: 10,
+    marginBottom: 12,
+    alignItems: 'center',
+    position: 'relative',
   },
-  infoRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  infoCol: { alignItems: 'center', flex: 1 },
-  infoLabel: { fontSize: 9, fontWeight: '700', marginBottom: 3 },
-  infoValue: { fontSize: 13, fontWeight: '900' },
+  liveStatItem: { flex: 1, alignItems: 'center' },
+  liveStatLabel: { fontSize: 9, fontWeight: '700', marginBottom: 3 },
+  liveStatValue: { fontSize: 12, fontWeight: '900' },
+  liveStatDivider: { width: 1, height: 26, backgroundColor: '#00000015' },
+  beBadge: {
+    position: 'absolute',
+    top: -8,
+    right: 10,
+    backgroundColor: AMBER,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  beBadgeText: { color: '#FFF', fontSize: 9, fontWeight: '900' },
 
   controlsRow: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 16,
-    marginBottom: 14,
+    gap: 10,
+    marginBottom: 12,
   },
   controlBtn: {
-    width: 52,
-    height: 52,
-    borderRadius: 18,
+    width: 48,
+    height: 48,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
   },
   playBtn: {
-    width: 68,
-    height: 68,
-    borderRadius: 24,
+    width: 64,
+    height: 64,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
 
-  tradeRow: { flexDirection: 'row', gap: 12, marginBottom: 14 },
+  tradeRow: { flexDirection: 'row', gap: 12, marginBottom: 16 },
   tradeBtn: {
     flex: 1,
-    height: 60,
+    height: 58,
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1062,40 +1370,44 @@ const styles = StyleSheet.create({
   },
   tradeBtnText: { color: '#FFF', fontSize: 15, fontWeight: '900' },
 
-  settingsCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    padding: 14,
-    marginBottom: 14,
+  sectionTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
   },
-  settingsRow: { flexDirection: 'row', gap: 12 },
-  settingLabel: { fontSize: 10, fontWeight: '700', marginBottom: 6 },
-  settingInput: {
-    borderRadius: 12,
-    borderWidth: 1,
-    height: 44,
-    paddingHorizontal: 12,
-    fontSize: 13,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
+  sectionTitle: { fontSize: 15, fontWeight: '900' },
+  sectionLink: { fontSize: 12, fontWeight: '800' },
 
-  statsCard: {
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  statCard: {
+    width: '48.5%',
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 12,
+    alignItems: 'flex-end',
+  },
+  statLabel: { fontSize: 10, fontWeight: '700' },
+  statValue: { fontSize: 16, fontWeight: '900', marginTop: 4 },
+
+  summaryCard: {
     borderRadius: 16,
-    borderWidth: 2,
+    borderWidth: 1,
     padding: 14,
     marginBottom: 14,
   },
-  statsTitle: {
-    fontSize: 14,
-    fontWeight: '900',
-    marginBottom: 12,
-    textAlign: 'right',
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
   },
-  statsGrid: { flexDirection: 'row', justifyContent: 'space-between' },
-  statItem: { alignItems: 'center', flex: 1 },
-  statValue: { fontSize: 17, fontWeight: '900' },
-  statLabel: { fontSize: 9, fontWeight: '700', marginTop: 3 },
+  summaryLabel: { fontSize: 11, fontWeight: '700' },
+  summaryValue: { fontSize: 13, fontWeight: '900' },
 
   logCard: {
     borderRadius: 16,
@@ -1118,8 +1430,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  logPair: { fontSize: 12, fontWeight: '900', width: 45 },
-  logPrice: { fontSize: 11, fontWeight: '700', flex: 1 },
+  logPair: { fontSize: 12, fontWeight: '900' },
+  logMeta: { fontSize: 9, fontWeight: '600', marginTop: 2 },
   logOutcome: {
     paddingHorizontal: 8,
     paddingVertical: 3,
@@ -1129,7 +1441,89 @@ const styles = StyleSheet.create({
   logResult: {
     fontSize: 12,
     fontWeight: '900',
-    width: 60,
+    width: 65,
     textAlign: 'left',
   },
+
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  settingsModal: {
+    maxHeight: '92%',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+  },
+  equityModal: {
+    maxHeight: '70%',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  modalTitle: { fontSize: 18, fontWeight: '900' },
+
+  fieldLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    marginTop: 10,
+    marginBottom: 6,
+    textAlign: 'right',
+  },
+  input: {
+    height: 46,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'right',
+  },
+
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    gap: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#00000010',
+  },
+  toggleLabel: { fontSize: 13, fontWeight: '900', textAlign: 'right' },
+  toggleSub: { fontSize: 10, fontWeight: '600', marginTop: 2, textAlign: 'right' },
+
+  saveBtn: {
+    marginTop: 20,
+    height: 52,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  saveBtnText: { color: '#FFF', fontSize: 14, fontWeight: '900' },
+
+  equityChartWrap: {
+    borderRadius: 16,
+    borderWidth: 1,
+    overflow: 'hidden',
+    height: 260,
+    marginBottom: 14,
+  },
+  equityInfo: { flexDirection: 'row', gap: 10 },
+  equityItem: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  equityLabel: { fontSize: 10, fontWeight: '700' },
+  equityValue: { fontSize: 18, fontWeight: '900', marginTop: 4 },
 });
