@@ -1,0 +1,2 @@
+﻿Need to install the following packages:
+typescript@7.0.2
