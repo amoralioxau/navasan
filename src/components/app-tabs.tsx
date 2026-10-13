@@ -114,6 +114,8 @@ export default function AppTabs() {
       {/* ✅ کمپین حذف شد */}
       <Tabs.Screen name="user-profile" options={{ href: null }} />
       <Tabs.Screen name="forgot-password" options={{ href: null }} />
+     {/* <Tabs.Screen name="notifications" options={{ href: null }} /> */}
+{/* <Tabs.Screen name="backtest" options={{ href: null }} /> */} 
       <Tabs.Screen name="reset-password" options={{ href: null }} />
     </Tabs>
   );

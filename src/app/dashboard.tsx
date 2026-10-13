@@ -450,7 +450,6 @@ export default function Dashboard() {
           </View>
 
           <View style={styles.headerActions}>
-            {/* ✅ XP PILL */}
             <TouchableOpacity
               onPress={() => router.push('/profile-xp' as any)}
               style={[styles.xpPill, { backgroundColor: levelInfo.color }]}
@@ -469,6 +468,7 @@ export default function Dashboard() {
                 styles.iconButton,
                 { backgroundColor: CARD, borderColor: BORDER },
               ]}
+              onPress={() => router.push('/notifications' as any)}
             >
               <Ionicons name="notifications-outline" size={21} color={TEXT} />
             </TouchableOpacity>
@@ -562,6 +562,47 @@ export default function Dashboard() {
               </View>
             </View>
           </View>
+        </View>
+
+        {/* QUICK ACTIONS — NEW */}
+        <View style={styles.quickActionsRow}>
+          <TouchableOpacity
+            style={[
+              styles.quickAction,
+              { backgroundColor: `${GOLD}15`, borderColor: GOLD },
+            ]}
+            activeOpacity={0.85}
+            onPress={() => router.push('/backtest' as any)}
+          >
+            <View style={[styles.quickActionIcon, { backgroundColor: `${GOLD}28` }]}>
+              <Ionicons name="game-controller" size={24} color={GOLD} />
+            </View>
+            <Text style={[styles.quickActionLabel, { color: TEXT }]}>
+              بک‌تست
+            </Text>
+            <Text style={[styles.quickActionSub, { color: MUTED }]}>
+              تست استراتژی
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.quickAction,
+              { backgroundColor: `${CYAN}15`, borderColor: CYAN },
+            ]}
+            activeOpacity={0.85}
+            onPress={() => router.push('/chart' as any)}
+          >
+            <View style={[styles.quickActionIcon, { backgroundColor: `${CYAN}28` }]}>
+              <Ionicons name="trending-up" size={24} color={CYAN} />
+            </View>
+            <Text style={[styles.quickActionLabel, { color: TEXT }]}>
+              چارت زنده
+            </Text>
+            <Text style={[styles.quickActionSub, { color: MUTED }]}>
+              تحلیل بازار
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* TODAY PROGRESS */}
@@ -1362,6 +1403,31 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   heroStatValue: { color: '#FFFFFF', fontSize: 15, fontWeight: '900' },
+
+  /* QUICK ACTIONS */
+  quickActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 16,
+  },
+  quickAction: {
+    flex: 1,
+    borderRadius: 18,
+    borderWidth: 1.5,
+    padding: 14,
+    alignItems: 'flex-start',
+    gap: 6,
+  },
+  quickActionIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  quickActionLabel: { fontSize: 13, fontWeight: '900' },
+  quickActionSub: { fontSize: 10, fontWeight: '600' },
 
   todayCard: {
     borderRadius: 20,

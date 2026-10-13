@@ -7,6 +7,7 @@ import {
   useNavasanTheme,
 } from '@/context/theme-context';
 import { XPProvider } from '@/context/xp-context';
+import { supabase } from '@/lib/supabase';
 
 function NavasanNavigation() {
   const { isDark } = useNavasanTheme();
@@ -23,7 +24,7 @@ function NavasanNavigation() {
         const { Platform } = await import('react-native');
 
         if (!Device.isDevice) {
-          console.log('[NOTIF] شبیه‌ساز — اعلان غیرفعال');
+          console.log('[NOTIF] شبیه‌ساز — غیرفعال');
           return;
         }
 
@@ -49,7 +50,36 @@ function NavasanNavigation() {
               name: 'NAVASAN',
               importance: Notifications.AndroidImportance.HIGH,
             });
-          } catch {}
+          } catch (e) {
+            console.log('[NOTIF] channel error:', e);
+          }
+        }
+
+        try {
+          const tokenData = await Notifications.getExpoPushTokenAsync();
+          const token = tokenData.data;
+          console.log('[NOTIF] Token:', token);
+
+          if (token && !cancelled) {
+            const { data: sessionData } = await supabase.auth.getSession();
+            const userId = sessionData?.session?.user?.id;
+
+            if (userId) {
+              await supabase.from('push_tokens').upsert(
+                {
+                  user_id: userId,
+                  token,
+                  platform: Platform.OS,
+                  is_active: true,
+                  updated_at: new Date().toISOString(),
+                },
+                { onConflict: 'user_id' }
+              );
+              console.log('[NOTIF] ✅ توکن ذخیره شد');
+            }
+          }
+        } catch (e) {
+          console.log('[NOTIF] getPushToken error:', e);
         }
 
         try {
@@ -63,7 +93,9 @@ function NavasanNavigation() {
               console.log('[NOTIF] دریافت:', notification);
             }
           );
-        } catch {}
+        } catch (e) {
+          console.log('[NOTIF] listener error:', e);
+        }
 
         console.log('[NOTIF] راه‌اندازی کامل ✅');
       } catch (e) {
