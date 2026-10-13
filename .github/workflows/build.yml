@@ -27,6 +27,17 @@ jobs:
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
+      # ✅ STEP 1: هماهنگ کردن نسخه پکیج‌های Expo با SDK 57
+      - name: Fix Expo package versions for SDK 57
+        run: npx expo install --fix
+        continue-on-error: true
+
+      # ✅ STEP 2: نمایش نسخه نهایی (برای دیباگ)
+      - name: Show final package versions
+        run: |
+          echo "=== Final Expo package versions ==="
+          grep -E "expo-notifications|expo-device|expo-modules-core|expo-audio|expo-file-system|\"expo\": " package.json || echo "not found"
+
       - name: Prebuild Android
         run: npx expo prebuild --platform android --no-install
 
