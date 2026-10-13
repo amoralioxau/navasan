@@ -56,6 +56,7 @@ export default function AppTabs() {
         },
       }}
     >
+      {/* VISIBLE TABS */}
       <Tabs.Screen
         name="dashboard"
         options={{
@@ -76,7 +77,6 @@ export default function AppTabs() {
         }}
       />
 
-      {/* ✅ فروشگاه حذف شد، جایگزین شد با چارت */}
       <Tabs.Screen
         name="chart"
         options={{
@@ -107,16 +107,21 @@ export default function AppTabs() {
         }}
       />
 
-      {/* HIDDEN */}
+      {/* ============================================ */}
+      {/* HIDDEN TABS — اینا توی نوار پایین نشون داده نمیشن */}
+      {/* ============================================ */}
+
       <Tabs.Screen name="subscription" options={{ href: null }} />
       <Tabs.Screen name="account" options={{ href: null }} />
       <Tabs.Screen name="more" options={{ href: null }} />
-      {/* ✅ کمپین حذف شد */}
       <Tabs.Screen name="user-profile" options={{ href: null }} />
       <Tabs.Screen name="forgot-password" options={{ href: null }} />
-     {/* <Tabs.Screen name="notifications" options={{ href: null }} /> */}
-{/* <Tabs.Screen name="backtest" options={{ href: null }} /> */} 
       <Tabs.Screen name="reset-password" options={{ href: null }} />
+
+      {/* ✅ این سه تا رو از کامنت دربیار تا مخفی بشن */}
+      <Tabs.Screen name="notifications" options={{ href: null }} />
+      <Tabs.Screen name="backtest" options={{ href: null }} />
+      <Tabs.Screen name="profile-xp" options={{ href: null }} />
     </Tabs>
   );
 }
