@@ -1,4 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -18,8 +19,6 @@ import { WebView } from 'react-native-webview';
 
 import { useNavasanTheme } from '@/context/theme-context';
 import {
-  buildBacktestChartHTML,
-  buildEquityCurveHTML,
   calcStats,
   createTrade,
   DEFAULT_SETTINGS,
@@ -35,6 +34,9 @@ const RED = '#DC2626';
 const AMBER = '#D97706';
 const GOLD = '#EAB308';
 const PURPLE = '#7C3AED';
+const CYAN = '#0891B2';
+
+const SESSION_KEY = 'navasan_backtest_session_v1';
 
 // =========================================================
 // DATA
@@ -47,6 +49,7 @@ const SYMBOLS = [
   { id: 'EURUSD', label: 'یورو/دلار' },
   { id: 'GBPUSD', label: 'پوند/دلار' },
   { id: 'SPX', label: 'S&P 500' },
+  { id: 'NAS100', label: 'نزدک' },
 ];
 
 const TIMEFRAMES: { id: Timeframe; label: string }[] = [
@@ -56,9 +59,415 @@ const TIMEFRAMES: { id: Timeframe; label: string }[] = [
   { id: '1d', label: 'روز' },
 ];
 
+const SPEEDS = [
+  { label: '0.5×', value: 800 },
+  { label: '1×', value: 400 },
+  { label: '2×', value: 200 },
+  { label: '5×', value: 80 },
+  { label: '10×', value: 30 },
+];
+
 const INITIAL_VISIBLE = 100;
 const TOTAL_CANDLES = 1000;
-const PLAY_INTERVAL_MS = 300;
+
+// =========================================================
+// CHART HTML (Lightweight Charts v4.2.3 — tested & working)
+// =========================================================
+
+const buildChartHTML = (isDark: boolean): string => {
+  const bg = isDark ? '#0A0A0A' : '#FFFFFF';
+  const textColor = isDark ? '#E5E7EB' : '#0F172A';
+  const gridColor = isDark ? '#1A1A1A' : '#F1F5F9';
+  const borderColor = isDark ? '#1E1E1E' : '#E2E8F0';
+  const panelBg = isDark ? '#0F0F0F' : '#FAFAFA';
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      width: 100%; height: 100%;
+      background: ${bg}; overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      color: ${textColor}; user-select: none;
+    }
+    #ohlc-bar {
+      position: absolute; top: 0; left: 0; right: 0; height: 28px;
+      background: ${panelBg}; border-bottom: 1px solid ${borderColor};
+      padding: 0 8px; display: flex; align-items: center; gap: 10px;
+      font-size: 10px; font-weight: 700; color: ${textColor};
+      z-index: 20; overflow-x: auto; scrollbar-width: none;
+    }
+    #ohlc-bar::-webkit-scrollbar { display: none; }
+    #ohlc-bar span { white-space: nowrap; }
+    #ohlc-bar span b { font-weight: 900; }
+    #ohlc-bar .up { color: #16A34A; }
+    #ohlc-bar .down { color: #DC2626; }
+    #trade-overlay {
+      position: absolute; top: 34px; left: 8px; z-index: 15;
+      background: ${bg}EE; backdrop-filter: blur(6px);
+      border: 1px solid ${borderColor};
+      padding: 6px 10px; border-radius: 8px;
+      font-size: 10px; font-weight: 800;
+      display: none;
+      min-width: 180px;
+    }
+    #trade-overlay.active { display: block; }
+    #trade-overlay .row { display: flex; justify-content: space-between; gap: 10px; margin: 2px 0; }
+    #trade-overlay .label { color: #94A3B8; }
+    #trade-overlay .value { font-weight: 900; }
+    #trade-overlay .pnl { font-size: 13px; font-weight: 900; text-align: center; margin-top: 4px; padding-top: 4px; border-top: 1px solid ${borderColor}; }
+    #main-chart { position: absolute; top: 28px; left: 0; right: 0; bottom: 0; }
+    .loading {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 12px; color: ${textColor}; background: ${bg}; z-index: 100;
+    }
+    .spinner {
+      width: 32px; height: 32px;
+      border: 3px solid ${gridColor};
+      border-top-color: #2563EB; border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .error { color: #DC2626; font-size: 12px; text-align: center; padding: 20px; line-height: 20px; }
+  </style>
+</head>
+<body>
+  <div id="ohlc-bar">
+    <span>O <b id="o-val">—</b></span>
+    <span>H <b id="h-val">—</b></span>
+    <span>L <b id="l-val">—</b></span>
+    <span>C <b id="c-val">—</b></span>
+  </div>
+
+  <div id="trade-overlay">
+    <div class="row"><span class="label">جهت:</span><span class="value" id="t-dir">—</span></div>
+    <div class="row"><span class="label">ورود:</span><span class="value" id="t-entry">—</span></div>
+    <div class="row"><span class="label">SL:</span><span class="value" id="t-sl">—</span></div>
+    <div class="row"><span class="label">TP:</span><span class="value" id="t-tp">—</span></div>
+    <div class="row"><span class="label">R:R:</span><span class="value" id="t-rr">—</span></div>
+    <div class="pnl" id="t-pnl">—</div>
+  </div>
+
+  <div id="main-chart"></div>
+
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    <div>در حال بارگذاری چارت...</div>
+  </div>
+
+  <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+  <script>
+    let chart = null;
+    let candleSeries = null;
+    let volumeSeries = null;
+    let ma20Series = null;
+    let ma50Series = null;
+    let entryLine = null;
+    let slLine = null;
+    let tpLine = null;
+    let currentCandles = [];
+    let currentTrade = null;
+    let showMA = true;
+    let showVolume = true;
+
+    // =====================================================
+    // INIT
+    // =====================================================
+    function initChart() {
+      try {
+        document.getElementById('loading').style.display = 'none';
+        const el = document.getElementById('main-chart');
+
+        chart = LightweightCharts.createChart(el, {
+          width: el.clientWidth,
+          height: el.clientHeight,
+          layout: {
+            background: { type: 'solid', color: '${bg}' },
+            textColor: '${textColor}',
+            fontSize: 10,
+          },
+          grid: {
+            vertLines: { color: '${gridColor}' },
+            horzLines: { color: '${gridColor}' },
+          },
+          rightPriceScale: {
+            borderColor: '${borderColor}',
+            scaleMargins: { top: 0.1, bottom: 0.2 },
+          },
+          timeScale: {
+            borderColor: '${borderColor}',
+            timeVisible: true,
+            rightOffset: 8,
+            barSpacing: 6,
+            minBarSpacing: 0.3,
+            fixLeftEdge: false,
+          },
+          crosshair: {
+            mode: 0,
+            vertLine: { color: '#2563EB', width: 1, style: 3, labelBackgroundColor: '#2563EB' },
+            horzLine: { color: '#2563EB', width: 1, style: 3, labelBackgroundColor: '#2563EB' },
+          },
+          handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+          handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
+        });
+
+        candleSeries = chart.addCandlestickSeries({
+          upColor: '#16A34A',
+          downColor: '#DC2626',
+          borderUpColor: '#16A34A',
+          borderDownColor: '#DC2626',
+          wickUpColor: '#16A34A',
+          wickDownColor: '#DC2626',
+          priceLineVisible: false,
+        });
+
+        volumeSeries = chart.addHistogramSeries({
+          color: '#2563EB30',
+          priceFormat: { type: 'volume' },
+          priceScaleId: 'volume',
+          lastValueVisible: false,
+          priceLineVisible: false,
+        });
+        chart.priceScale('volume').applyOptions({
+          scaleMargins: { top: 0.85, bottom: 0 },
+        });
+
+        ma20Series = chart.addLineSeries({
+          color: '#F59E0B', lineWidth: 2, priceLineVisible: false,
+          lastValueVisible: false, crosshairMarkerVisible: false,
+        });
+
+        ma50Series = chart.addLineSeries({
+          color: '#7C3AED', lineWidth: 2, priceLineVisible: false,
+          lastValueVisible: false, crosshairMarkerVisible: false,
+        });
+
+        chart.subscribeCrosshairMove((param) => {
+          if (!param.time || !param.seriesData.has(candleSeries)) {
+            const last = currentCandles[currentCandles.length - 1];
+            if (last) renderOHLC(last);
+            return;
+          }
+          const d = param.seriesData.get(candleSeries);
+          if (d) renderOHLC(d);
+        });
+
+        new ResizeObserver(() => {
+          if (chart && el) {
+            chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
+          }
+        }).observe(el);
+
+      } catch (e) {
+        document.getElementById('loading').innerHTML =
+          '<div class="error">خطا در راه‌اندازی چارت<br/>' + (e.message || '') + '</div>';
+      }
+    }
+
+    function renderOHLC(d) {
+      document.getElementById('o-val').textContent = d.open.toFixed(d.open > 100 ? 2 : 4);
+      document.getElementById('h-val').textContent = d.high.toFixed(d.high > 100 ? 2 : 4);
+      document.getElementById('l-val').textContent = d.low.toFixed(d.low > 100 ? 2 : 4);
+      document.getElementById('c-val').textContent = d.close.toFixed(d.close > 100 ? 2 : 4);
+      document.getElementById('c-val').className = d.close >= d.open ? 'up' : 'down';
+    }
+
+    function calcSMA(candles, period) {
+      const r = [];
+      for (let i = 0; i < candles.length; i++) {
+        if (i < period - 1) continue;
+        let sum = 0;
+        for (let j = 0; j < period; j++) sum += candles[i - j].close;
+        r.push({ time: Math.floor(candles[i].timestamp / 1000), value: sum / period });
+      }
+      return r;
+    }
+
+    // =====================================================
+    // SET CANDLES
+    // =====================================================
+    window.setCandles = function (candles) {
+      if (!chart || !candleSeries || !candles || candles.length === 0) return;
+      currentCandles = candles;
+
+      const formatted = candles.map(c => ({
+        time: Math.floor(c.timestamp / 1000),
+        open: c.open, high: c.high, low: c.low, close: c.close,
+      }));
+      candleSeries.setData(formatted);
+
+      if (showVolume && volumeSeries) {
+        volumeSeries.setData(candles.map(c => ({
+          time: Math.floor(c.timestamp / 1000),
+          value: c.volume || 0,
+          color: c.close >= c.open ? '#16A34A30' : '#DC262630',
+        })));
+      }
+
+      if (showMA && ma20Series && ma50Series) {
+        ma20Series.setData(calcSMA(candles, 20));
+        ma50Series.setData(calcSMA(candles, 50));
+      }
+
+      const last = candles[candles.length - 1];
+      if (last) renderOHLC(last);
+    };
+
+    // =====================================================
+    // SET MARKERS
+    // =====================================================
+    window.setMarkers = function (markers) {
+      if (candleSeries) candleSeries.setMarkers(markers || []);
+    };
+
+    // =====================================================
+    // SET TRADE LINES (entry/SL/TP)
+    // =====================================================
+    window.setTradeLines = function (trade) {
+      if (!candleSeries) return;
+
+      // Clear existing
+      if (entryLine) { candleSeries.removePriceLine(entryLine); entryLine = null; }
+      if (slLine) { candleSeries.removePriceLine(slLine); slLine = null; }
+      if (tpLine) { candleSeries.removePriceLine(tpLine); tpLine = null; }
+
+      currentTrade = trade;
+
+      if (!trade) {
+        document.getElementById('trade-overlay').classList.remove('active');
+        return;
+      }
+
+      // Entry
+      entryLine = candleSeries.createPriceLine({
+        price: trade.entryPrice,
+        color: '#2563EB',
+        lineWidth: 2,
+        lineStyle: 0,
+        axisLabelVisible: true,
+        title: 'ورود',
+      });
+
+      // SL
+      slLine = candleSeries.createPriceLine({
+        price: trade.currentStopLoss,
+        color: '#DC2626',
+        lineWidth: 2,
+        lineStyle: 2,
+        axisLabelVisible: true,
+        title: 'SL',
+      });
+
+      // TP
+      const finalStage = trade.stages[trade.stages.length - 1];
+      if (finalStage) {
+        tpLine = candleSeries.createPriceLine({
+          price: finalStage.level,
+          color: '#16A34A',
+          lineWidth: 2,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: 'TP',
+        });
+      }
+
+      // Overlay
+      const overlay = document.getElementById('trade-overlay');
+      overlay.classList.add('active');
+      document.getElementById('t-dir').textContent = trade.direction === 'buy' ? 'BUY' : 'SELL';
+      document.getElementById('t-dir').style.color = trade.direction === 'buy' ? '#16A34A' : '#DC2626';
+      document.getElementById('t-entry').textContent = trade.entryPrice.toFixed(trade.entryPrice > 100 ? 2 : 4);
+      document.getElementById('t-sl').textContent = trade.currentStopLoss.toFixed(trade.currentStopLoss > 100 ? 2 : 4);
+      const risk = Math.abs(trade.entryPrice - trade.currentStopLoss);
+      const reward = Math.abs(finalStage.level - trade.entryPrice);
+      document.getElementById('t-tp').textContent = finalStage.level.toFixed(finalStage.level > 100 ? 2 : 4);
+      document.getElementById('t-rr').textContent = risk > 0 ? '1:' + (reward / risk).toFixed(2) : '—';
+    };
+
+    // =====================================================
+    // UPDATE PnL (لحظه‌ای)
+    // =====================================================
+    window.updatePnL = function (currentPrice) {
+      if (!currentTrade) return;
+      const diff = currentTrade.direction === 'buy'
+        ? currentPrice - currentTrade.entryPrice
+        : currentTrade.entryPrice - currentPrice;
+      const pnl = diff * currentTrade.positionSize;
+      const pnlEl = document.getElementById('t-pnl');
+      pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2);
+      pnlEl.style.color = pnl >= 0 ? '#16A34A' : '#DC2626';
+    };
+
+    window.fitContent = function () { if (chart) chart.timeScale().fitContent(); };
+    window.scrollRealtime = function () { if (chart) chart.timeScale().scrollToRealTime(); };
+
+    if (document.readyState === 'complete') initChart();
+    else window.addEventListener('load', initChart);
+  </script>
+</body>
+</html>
+  `;
+};
+
+const buildEquityHTML = (isDark: boolean): string => {
+  const bg = isDark ? '#0A0A0A' : '#FFFFFF';
+  const textColor = isDark ? '#E5E7EB' : '#0F172A';
+  const gridColor = isDark ? '#1A1A1A' : '#F1F5F9';
+  const borderColor = isDark ? '#1E1E1E' : '#E2E8F0';
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; background: ${bg}; overflow: hidden; }
+    #eq { width: 100%; height: 100%; }
+  </style>
+</head>
+<body>
+  <div id="eq"></div>
+  <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+  <script>
+    let chart = null, series = null;
+    function init() {
+      const el = document.getElementById('eq');
+      chart = LightweightCharts.createChart(el, {
+        width: el.clientWidth, height: el.clientHeight,
+        layout: { background: { type: 'solid', color: '${bg}' }, textColor: '${textColor}', fontSize: 10 },
+        grid: { vertLines: { color: '${gridColor}' }, horzLines: { color: '${gridColor}' } },
+        rightPriceScale: { borderColor: '${borderColor}' },
+        timeScale: { borderColor: '${borderColor}', timeVisible: true },
+      });
+      series = chart.addAreaSeries({
+        topColor: '#16A34A50', bottomColor: '#16A34A05',
+        lineColor: '#16A34A', lineWidth: 2,
+      });
+      new ResizeObserver(() => {
+        chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
+      }).observe(el);
+    }
+    window.setEquity = function (data) {
+      if (series && data && data.length) {
+        series.setData(data);
+        chart.timeScale().fitContent();
+      }
+    };
+    if (document.readyState === 'complete') init();
+    else window.addEventListener('load', init);
+  </script>
+</body>
+</html>
+  `;
+};
 
 // =========================================================
 // MAIN
@@ -75,24 +484,87 @@ export default function BacktestScreen() {
 
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [speedIdx, setSpeedIdx] = useState(1); // 1x default
   const [trades, setTrades] = useState<BacktestTrade[]>([]);
   const [settings, setSettings] = useState<BacktestSettings>(DEFAULT_SETTINGS);
 
   const [showSettings, setShowSettings] = useState(false);
   const [showEquity, setShowEquity] = useState(false);
+  const [showOrder, setShowOrder] = useState(false);
+  const [showSymbolPicker, setShowSymbolPicker] = useState(false);
   const [settingsForm, setSettingsForm] = useState<BacktestSettings>(DEFAULT_SETTINGS);
+
+  const [orderDirection, setOrderDirection] = useState<'buy' | 'sell'>('buy');
+  const [orderType, setOrderType] = useState<'market' | 'limit' | 'stop'>('market');
+  const [customEntry, setCustomEntry] = useState('');
+  const [customSL, setCustomSL] = useState('');
+  const [customTP, setCustomTP] = useState('');
+  const [autoSL, setAutoSL] = useState(true);
+  const [autoTP, setAutoTP] = useState(true);
 
   const webViewRef = useRef<WebView>(null);
   const equityViewRef = useRef<WebView>(null);
   const playTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const chartHTML = useMemo(() => buildBacktestChartHTML(isDark), [isDark]);
-  const equityHTML = useMemo(() => buildEquityCurveHTML(isDark), [isDark]);
+  const chartHTML = useMemo(() => buildChartHTML(isDark), [isDark]);
+  const equityHTML = useMemo(() => buildEquityHTML(isDark), [isDark]);
   const chartKey = isDark ? 'c-dark' : 'c-light';
   const equityKey = isDark ? 'e-dark' : 'e-light';
 
   const [chartReady, setChartReady] = useState(false);
   const [equityReady, setEquityReady] = useState(false);
+
+  // =========================================================
+  // SESSION SAVE / LOAD
+  // =========================================================
+
+  const saveSession = useCallback(async () => {
+    try {
+      const session = {
+        symbol,
+        timeframe,
+        visibleCount,
+        trades,
+        settings,
+        savedAt: Date.now(),
+      };
+      await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(session));
+      Alert.alert('ذخیره شد', 'جلسه بک‌تست ذخیره شد.');
+    } catch (e) {
+      console.log('Save error:', e);
+    }
+  }, [symbol, timeframe, visibleCount, trades, settings]);
+
+  const loadSession = useCallback(async () => {
+    try {
+      const raw = await AsyncStorage.getItem(SESSION_KEY);
+      if (!raw) {
+        Alert.alert('چیزی نیست', 'جلسه ذخیره‌شده‌ای پیدا نشد.');
+        return;
+      }
+      const session = JSON.parse(raw);
+      Alert.alert(
+        'بارگذاری جلسه',
+        `جلسه ذخیره‌شده در ${new Date(session.savedAt).toLocaleString('fa-IR')}\nبارگذاری شود؟`,
+        [
+          { text: 'انصراف', style: 'cancel' },
+          {
+            text: 'بارگذاری',
+            onPress: () => {
+              setSymbol(session.symbol);
+              setTimeframe(session.timeframe);
+              setSettings(session.settings);
+              setSettingsForm(session.settings);
+              setVisibleCount(session.visibleCount);
+              setTrades(session.trades);
+            },
+          },
+        ]
+      );
+    } catch (e) {
+      console.log('Load error:', e);
+    }
+  }, []);
 
   // =========================================================
   // LOAD DATA
@@ -124,7 +596,7 @@ export default function BacktestScreen() {
   }, [loadData]);
 
   // =========================================================
-  // SEND CANDLES + MARKERS TO WEBVIEW
+  // SEND TO CHART
   // =========================================================
 
   const sendToChart = useCallback(() => {
@@ -164,23 +636,30 @@ export default function BacktestScreen() {
       `window.setMarkers(${JSON.stringify(markers)}); true;`
     );
 
-    // Stop loss line for open trade
+    // Trade lines
     const openTrade = trades.find((t) => t.outcome === 'open');
-    if (openTrade) {
-      webViewRef.current.injectJavaScript(
-        `window.setStopLine(${openTrade.currentStopLoss}); true;`
-      );
-    } else {
-      webViewRef.current.injectJavaScript('window.clearStopLine(); true;');
-    }
+    webViewRef.current.injectJavaScript(
+      `window.setTradeLines(${openTrade ? JSON.stringify(openTrade) : 'null'}); true;`
+    );
   }, [candles, visibleCount, trades, chartReady]);
 
   useEffect(() => {
     sendToChart();
   }, [sendToChart]);
 
+  // Update PnL on price move
+  useEffect(() => {
+    if (!webViewRef.current || !chartReady) return;
+    const last = candles[visibleCount - 1];
+    if (last) {
+      webViewRef.current.injectJavaScript(
+        `window.updatePnL(${last.close}); true;`
+      );
+    }
+  }, [visibleCount, candles, chartReady]);
+
   // =========================================================
-  // SEND EQUITY CURVE
+  // EQUITY CURVE
   // =========================================================
 
   const stats = useMemo(
@@ -191,7 +670,6 @@ export default function BacktestScreen() {
   useEffect(() => {
     if (!equityViewRef.current || !equityReady) return;
     if (stats.equityCurve.length === 0) return;
-
     equityViewRef.current.injectJavaScript(
       `window.setEquity(${JSON.stringify(stats.equityCurve)}); true;`
     );
@@ -210,6 +688,7 @@ export default function BacktestScreen() {
       return;
     }
 
+    const interval = SPEEDS[speedIdx].value;
     playTimer.current = setInterval(() => {
       setVisibleCount((prev) => {
         if (prev >= candles.length) {
@@ -218,18 +697,15 @@ export default function BacktestScreen() {
         }
         return prev + 1;
       });
-    }, PLAY_INTERVAL_MS);
+    }, interval);
 
     return () => {
-      if (playTimer.current) {
-        clearInterval(playTimer.current);
-        playTimer.current = null;
-      }
+      if (playTimer.current) clearInterval(playTimer.current);
     };
-  }, [isPlaying, candles.length]);
+  }, [isPlaying, candles.length, speedIdx]);
 
   // =========================================================
-  // PROCESS TRADE EXITS ON NEW CANDLE
+  // PROCESS TRADE EXITS
   // =========================================================
 
   useEffect(() => {
@@ -251,7 +727,22 @@ export default function BacktestScreen() {
   // HANDLERS
   // =========================================================
 
-  const handleTrade = (direction: 'buy' | 'sell') => {
+  const openOrderModal = (dir: 'buy' | 'sell') => {
+    const idx = visibleCount - 1;
+    const candle = candles[idx];
+    if (!candle) return;
+
+    setOrderDirection(dir);
+    setOrderType('market');
+    setAutoSL(true);
+    setAutoTP(true);
+    setCustomEntry(candle.close.toString());
+    setCustomSL('');
+    setCustomTP('');
+    setShowOrder(true);
+  };
+
+  const submitOrder = () => {
     const idx = visibleCount - 1;
     const candle = candles[idx];
     if (!candle) return;
@@ -262,13 +753,67 @@ export default function BacktestScreen() {
       return;
     }
 
-    const trade = createTrade(candle, idx, direction, candles, settings);
+    // Auto ATR-based SL/TP
+    let trade = createTrade(candle, idx, orderDirection, candles, settings);
     if (!trade) {
-      Alert.alert('خطا', 'ATR قابل محاسبه نیست. چند کندل بیشتر جلو برو.');
+      Alert.alert('خطا', 'ATR قابل محاسبه نیست.');
       return;
     }
 
+    // Custom entry
+    if (orderType !== 'market') {
+      const entry = parseFloat(customEntry);
+      if (isNaN(entry)) {
+        Alert.alert('خطا', 'قیمت ورود نامعتبر');
+        return;
+      }
+      // For Limit/Stop, we set a pending order (simplified: wait 1 candle)
+      // For now, we set as market with custom entry
+      trade = {
+        ...trade,
+        entryPrice: entry,
+      };
+    }
+
+    // Custom SL
+    if (!autoSL) {
+      const sl = parseFloat(customSL);
+      if (!isNaN(sl)) {
+        trade = {
+          ...trade,
+          stopLoss: sl,
+          currentStopLoss: sl,
+          originalStopLoss: sl,
+        };
+      }
+    }
+
+    // Custom TP
+    if (!autoTP) {
+      const tp = parseFloat(customTP);
+      if (!isNaN(tp)) {
+        const risk = Math.abs(trade.entryPrice - trade.currentStopLoss);
+        const reward = Math.abs(tp - trade.entryPrice);
+        const rr = risk > 0 ? reward / risk : 2;
+        const stages = trade.stages.map((s, i) => {
+          if (i === trade.stages.length - 1) {
+            return { ...s, level: tp };
+          }
+          const pct = (i + 1) / trade.stages.length;
+          return {
+            ...s,
+            level:
+              trade.direction === 'buy'
+                ? trade.entryPrice + risk * pct * rr
+                : trade.entryPrice - risk * pct * rr,
+          };
+        });
+        trade = { ...trade, stages };
+      }
+    }
+
     setTrades((prev) => [trade, ...prev]);
+    setShowOrder(false);
   };
 
   const togglePlay = () => {
@@ -277,14 +822,12 @@ export default function BacktestScreen() {
   };
 
   const stepForward = () => {
-    if (visibleCount < candles.length) {
-      setVisibleCount((c) => c + 1);
-    }
+    if (visibleCount < candles.length) setVisibleCount((c) => c + 1);
   };
 
-  const stepForward5 = () => {
+  const stepForwardN = (n: number) => {
     if (visibleCount < candles.length) {
-      setVisibleCount((c) => Math.min(c + 5, candles.length));
+      setVisibleCount((c) => Math.min(c + n, candles.length));
     }
   };
 
@@ -311,13 +854,60 @@ export default function BacktestScreen() {
     setIsPlaying(false);
   };
 
+  const closeTradeManually = (tradeId: string) => {
+    Alert.alert('بستن دستی', 'این معامله به قیمت فعلی بسته شود؟', [
+      { text: 'انصراف', style: 'cancel' },
+      {
+        text: 'بستن',
+        onPress: () => {
+          const idx = visibleCount - 1;
+          const candle = candles[idx];
+          if (!candle) return;
+          setTrades((prev) =>
+            prev.map((t) => {
+              if (t.id !== tradeId || t.outcome !== 'open') return t;
+              const perUnit =
+                t.direction === 'buy'
+                  ? candle.close - t.entryPrice
+                  : t.entryPrice - candle.close;
+              const risk = Math.abs(t.entryPrice - t.originalStopLoss);
+              const result = perUnit * t.positionSize;
+              return {
+                ...t,
+                exitIndex: idx,
+                exitPrice: candle.close,
+                result,
+                resultR: risk > 0 ? perUnit / risk : 0,
+                outcome: result > 0 ? 'win' : result < 0 ? 'loss' : 'be',
+                closedPercent: 100,
+              };
+            })
+          );
+        },
+      },
+    ]);
+  };
+
   // =========================================================
-  // RENDER
+  // RENDER HELPERS
   // =========================================================
 
   const lastCandle = candles[visibleCount - 1];
   const openTrade = trades.find((t) => t.outcome === 'open');
   const progress = candles.length ? (visibleCount / candles.length) * 100 : 0;
+
+  const livePnL = useMemo(() => {
+    if (!openTrade || !lastCandle) return 0;
+    const perUnit =
+      openTrade.direction === 'buy'
+        ? lastCandle.close - openTrade.entryPrice
+        : openTrade.entryPrice - lastCandle.close;
+    return perUnit * openTrade.positionSize;
+  }, [openTrade, lastCandle]);
+
+  // =========================================================
+  // RENDER
+  // =========================================================
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
@@ -333,14 +923,17 @@ export default function BacktestScreen() {
           <Ionicons name="arrow-back" size={20} color={colors.text} />
         </TouchableOpacity>
 
-        <View style={{ flex: 1, alignItems: 'center' }}>
+        <TouchableOpacity
+          onPress={() => setShowSymbolPicker(true)}
+          style={{ flex: 1, alignItems: 'center' }}
+        >
           <Text style={[styles.title, { color: colors.text }]}>
-            بک‌تست حرفه‌ای
+            {symbol}
           </Text>
           <Text style={[styles.subtitle, { color: colors.mutedText }]}>
-            {symbol} • {timeframe} • {candles.length} کندل
+            {timeframe} • {candles.length} کندل
           </Text>
-        </View>
+        </TouchableOpacity>
 
         <TouchableOpacity
           onPress={() => setShowSettings(true)}
@@ -351,78 +944,22 @@ export default function BacktestScreen() {
         >
           <Ionicons name="options-outline" size={20} color={colors.text} />
         </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={saveSession}
+          style={[
+            styles.iconBtn,
+            { backgroundColor: colors.card, borderColor: colors.border },
+          ]}
+        >
+          <Ionicons name="save-outline" size={18} color={colors.text} />
+        </TouchableOpacity>
       </View>
 
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
       >
-        {/* SYMBOL PICKER */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.pillsRow}
-        >
-          {SYMBOLS.map((s) => {
-            const active = s.id === symbol;
-            return (
-              <TouchableOpacity
-                key={s.id}
-                onPress={() => setSymbol(s.id)}
-                style={[
-                  styles.pill,
-                  {
-                    backgroundColor: active ? BLUE : colors.card,
-                    borderColor: active ? BLUE : colors.border,
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.pillText,
-                    { color: active ? '#FFF' : colors.text },
-                  ]}
-                >
-                  {s.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-
-        {/* TIMEFRAME PICKER */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.pillsRow}
-        >
-          {TIMEFRAMES.map((tf) => {
-            const active = tf.id === timeframe;
-            return (
-              <TouchableOpacity
-                key={tf.id}
-                onPress={() => setTimeframe(tf.id)}
-                style={[
-                  styles.pill,
-                  {
-                    backgroundColor: active ? BLUE : colors.card,
-                    borderColor: active ? BLUE : colors.border,
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.pillText,
-                    { color: active ? '#FFF' : colors.text },
-                  ]}
-                >
-                  {tf.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-
         {/* CHART */}
         <View
           style={[
@@ -454,135 +991,145 @@ export default function BacktestScreen() {
           )}
         </View>
 
-        {/* PROGRESS */}
-        <View style={styles.progressWrap}>
+        {/* TIMELINE SLIDER */}
+        <View style={styles.sliderWrap}>
+          <View style={styles.sliderHeader}>
+            <Text style={[styles.sliderLabel, { color: colors.mutedText }]}>
+              کندل {visibleCount} از {candles.length}
+            </Text>
+            <Text style={[styles.sliderLabel, { color: colors.mutedText }]}>
+              {progress.toFixed(0)}%
+            </Text>
+          </View>
           <View
-            style={[styles.progressTrack, { backgroundColor: colors.input }]}
+            style={[styles.sliderTrack, { backgroundColor: colors.input }]}
           >
             <View
               style={[
-                styles.progressFill,
+                styles.sliderFill,
                 { width: `${progress}%`, backgroundColor: BLUE },
               ]}
             />
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.sliderBtns}
+            >
+              <TouchableOpacity
+                onPress={() => setVisibleCount(INITIAL_VISIBLE)}
+                style={styles.sliderBtn}
+              >
+                <Text style={[styles.sliderBtnText, { color: colors.mutedText }]}>
+                  شروع
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => stepForwardN(-50)}
+                style={styles.sliderBtn}
+              >
+                <Ionicons name="play-back" size={12} color={colors.mutedText} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => stepForwardN(50)}
+                style={styles.sliderBtn}
+              >
+                <Ionicons name="play-forward" size={12} color={colors.mutedText} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setVisibleCount(candles.length)}
+                style={styles.sliderBtn}
+              >
+                <Text style={[styles.sliderBtnText, { color: colors.mutedText }]}>
+                  پایان
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
           </View>
-          <Text style={[styles.progressText, { color: colors.mutedText }]}>
-            کندل {visibleCount} از {candles.length} ({progress.toFixed(0)}%)
-          </Text>
         </View>
 
-        {/* LIVE STATS BAR */}
+        {/* LIVE PRICE + P&L */}
         {lastCandle && (
           <View
             style={[
-              styles.liveStatsBar,
+              styles.liveBar,
               { backgroundColor: colors.card, borderColor: colors.border },
             ]}
           >
-            <View style={styles.liveStatItem}>
-              <Text style={[styles.liveStatLabel, { color: colors.mutedText }]}>
+            <View style={styles.liveCol}>
+              <Text style={[styles.liveLabel, { color: colors.mutedText }]}>
                 قیمت
               </Text>
-              <Text style={[styles.liveStatValue, { color: colors.text }]}>
+              <Text style={[styles.liveValue, { color: colors.text }]}>
                 {lastCandle.close.toFixed(lastCandle.close > 100 ? 2 : 4)}
+              </Text>
+            </View>
+
+            <View style={styles.liveDivider} />
+
+            <View style={styles.liveCol}>
+              <Text style={[styles.liveLabel, { color: colors.mutedText }]}>
+                P&L
+              </Text>
+              <Text
+                style={[
+                  styles.liveValue,
+                  { color: livePnL >= 0 ? GREEN : RED },
+                ]}
+              >
+                {livePnL >= 0 ? '+' : ''}${livePnL.toFixed(2)}
               </Text>
             </View>
 
             {openTrade && (
               <>
-                <View style={styles.liveStatDivider} />
-                <View style={styles.liveStatItem}>
-                  <Text
-                    style={[styles.liveStatLabel, { color: colors.mutedText }]}
-                  >
-                    معامله
-                  </Text>
-                  <Text
-                    style={[
-                      styles.liveStatValue,
-                      {
-                        color: openTrade.direction === 'buy' ? GREEN : RED,
-                      },
-                    ]}
-                  >
-                    {openTrade.direction === 'buy' ? 'BUY' : 'SELL'}
-                  </Text>
-                </View>
-                <View style={styles.liveStatDivider} />
-                <View style={styles.liveStatItem}>
-                  <Text
-                    style={[styles.liveStatLabel, { color: colors.mutedText }]}
-                  >
-                    ورود
-                  </Text>
-                  <Text style={[styles.liveStatValue, { color: colors.text }]}>
-                    {openTrade.entryPrice.toFixed(
-                      openTrade.entryPrice > 100 ? 2 : 4
-                    )}
-                  </Text>
-                </View>
-                <View style={styles.liveStatDivider} />
-                <View style={styles.liveStatItem}>
-                  <Text
-                    style={[styles.liveStatLabel, { color: colors.mutedText }]}
-                  >
-                    SL
-                  </Text>
-                  <Text
-                    style={[styles.liveStatValue, { color: RED, fontSize: 11 }]}
-                  >
-                    {openTrade.currentStopLoss.toFixed(
-                      openTrade.currentStopLoss > 100 ? 2 : 4
-                    )}
-                  </Text>
-                </View>
-                {openTrade.breakEvenTriggered && (
-                  <View style={styles.beBadge}>
-                    <Text style={styles.beBadgeText}>BE</Text>
-                  </View>
-                )}
+                <View style={styles.liveDivider} />
+                <TouchableOpacity
+                  onPress={() => closeTradeManually(openTrade.id)}
+                  style={[
+                    styles.closeTradeBtn,
+                    { backgroundColor: `${RED}22`, borderColor: RED },
+                  ]}
+                >
+                  <Ionicons name="close-circle" size={14} color={RED} />
+                  <Text style={styles.closeTradeBtnText}>بستن</Text>
+                </TouchableOpacity>
               </>
             )}
           </View>
         )}
 
-        {/* CONTROLS */}
-        <View style={styles.controlsRow}>
+        {/* CONTROLS BAR */}
+        <View style={styles.controlsBar}>
+          <TouchableOpacity
+            onPress={() => stepForwardN(-10)}
+            disabled={visibleCount <= INITIAL_VISIBLE || isPlaying}
+            style={[
+              styles.smBtn,
+              {
+                backgroundColor: colors.card,
+                borderColor: colors.border,
+                opacity: visibleCount <= INITIAL_VISIBLE || isPlaying ? 0.4 : 1,
+              },
+            ]}
+          >
+            <Text style={{ color: colors.text, fontSize: 10, fontWeight: '900' }}>
+              ‹‹10
+            </Text>
+          </TouchableOpacity>
+
           <TouchableOpacity
             onPress={stepForward}
             disabled={visibleCount >= candles.length || isPlaying}
             style={[
-              styles.controlBtn,
+              styles.smBtn,
               {
                 backgroundColor: colors.card,
                 borderColor: colors.border,
-                opacity:
-                  visibleCount >= candles.length || isPlaying ? 0.4 : 1,
+                opacity: visibleCount >= candles.length || isPlaying ? 0.4 : 1,
               },
             ]}
           >
-            <Ionicons name="play-skip-forward" size={18} color={colors.text} />
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={stepForward5}
-            disabled={visibleCount >= candles.length || isPlaying}
-            style={[
-              styles.controlBtn,
-              {
-                backgroundColor: colors.card,
-                borderColor: colors.border,
-                opacity:
-                  visibleCount >= candles.length || isPlaying ? 0.4 : 1,
-              },
-            ]}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Ionicons name="play-skip-forward" size={14} color={colors.text} />
-              <Text style={{ fontSize: 9, fontWeight: '900', color: colors.text, marginLeft: 2 }}>
-                ×5
-              </Text>
-            </View>
+            <Ionicons name="play-skip-forward" size={16} color={colors.text} />
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -595,42 +1142,92 @@ export default function BacktestScreen() {
           >
             <Ionicons
               name={isPlaying ? 'pause' : 'play'}
-              size={26}
+              size={24}
               color="#FFF"
             />
           </TouchableOpacity>
 
           <TouchableOpacity
-            onPress={() => setVisibleCount(candles.length)}
+            onPress={() => stepForwardN(5)}
             disabled={visibleCount >= candles.length || isPlaying}
             style={[
-              styles.controlBtn,
+              styles.smBtn,
               {
                 backgroundColor: colors.card,
                 borderColor: colors.border,
-                opacity:
-                  visibleCount >= candles.length || isPlaying ? 0.4 : 1,
+                opacity: visibleCount >= candles.length || isPlaying ? 0.4 : 1,
               },
             ]}
           >
-            <Ionicons name="play-forward" size={18} color={colors.text} />
+            <Text style={{ color: colors.text, fontSize: 10, fontWeight: '900' }}>
+              5››
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => stepForwardN(10)}
+            disabled={visibleCount >= candles.length || isPlaying}
+            style={[
+              styles.smBtn,
+              {
+                backgroundColor: colors.card,
+                borderColor: colors.border,
+                opacity: visibleCount >= candles.length || isPlaying ? 0.4 : 1,
+              },
+            ]}
+          >
+            <Text style={{ color: colors.text, fontSize: 10, fontWeight: '900' }}>
+              10››
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             onPress={resetSession}
             style={[
-              styles.controlBtn,
+              styles.smBtn,
               { backgroundColor: colors.card, borderColor: colors.border },
             ]}
           >
-            <Ionicons name="refresh" size={18} color={colors.text} />
+            <Ionicons name="refresh" size={16} color={colors.text} />
           </TouchableOpacity>
+        </View>
+
+        {/* SPEED SELECTOR */}
+        <View style={styles.speedRow}>
+          <Text style={[styles.speedLabel, { color: colors.mutedText }]}>
+            سرعت:
+          </Text>
+          {SPEEDS.map((s, idx) => {
+            const active = idx === speedIdx;
+            return (
+              <TouchableOpacity
+                key={s.label}
+                onPress={() => setSpeedIdx(idx)}
+                style={[
+                  styles.speedBtn,
+                  {
+                    backgroundColor: active ? BLUE : colors.input,
+                    borderColor: active ? BLUE : colors.border,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.speedBtnText,
+                    { color: active ? '#FFF' : colors.mutedText },
+                  ]}
+                >
+                  {s.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
         {/* TRADE BUTTONS */}
         <View style={styles.tradeRow}>
           <TouchableOpacity
-            onPress={() => handleTrade('buy')}
+            onPress={() => openOrderModal('buy')}
             disabled={!!openTrade || visibleCount >= candles.length}
             style={[
               styles.tradeBtn,
@@ -649,7 +1246,7 @@ export default function BacktestScreen() {
           </TouchableOpacity>
 
           <TouchableOpacity
-            onPress={() => handleTrade('sell')}
+            onPress={() => openOrderModal('sell')}
             disabled={!!openTrade || visibleCount >= candles.length}
             style={[
               styles.tradeBtn,
@@ -668,12 +1265,12 @@ export default function BacktestScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* STATS CARDS */}
+        {/* STATS */}
         {stats.total > 0 && (
           <>
             <View style={styles.sectionTitleRow}>
               <Text style={[styles.sectionTitle, { color: colors.text }]}>
-                آمار حرفه‌ای
+                آمار جلسه
               </Text>
               <TouchableOpacity onPress={() => setShowEquity(true)}>
                 <Text style={[styles.sectionLink, { color: BLUE }]}>
@@ -748,62 +1345,6 @@ export default function BacktestScreen() {
                 mutedColor={colors.mutedText}
               />
             </View>
-
-            <View
-              style={[
-                styles.summaryCard,
-                { backgroundColor: colors.card, borderColor: colors.border },
-              ]}
-            >
-              <View style={styles.summaryRow}>
-                <Text style={[styles.summaryLabel, { color: colors.mutedText }]}>
-                  میانگین برد
-                </Text>
-                <Text style={[styles.summaryValue, { color: GREEN }]}>
-                  +${stats.avgWin.toFixed(2)}
-                </Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={[styles.summaryLabel, { color: colors.mutedText }]}>
-                  میانگین باخت
-                </Text>
-                <Text style={[styles.summaryValue, { color: RED }]}>
-                  -${stats.avgLoss.toFixed(2)}
-                </Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={[styles.summaryLabel, { color: colors.mutedText }]}>
-                  بزرگ‌ترین برد
-                </Text>
-                <Text style={[styles.summaryValue, { color: GREEN }]}>
-                  +${stats.largestWin.toFixed(2)}
-                </Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={[styles.summaryLabel, { color: colors.mutedText }]}>
-                  بزرگ‌ترین باخت
-                </Text>
-                <Text style={[styles.summaryValue, { color: RED }]}>
-                  ${stats.largestLoss.toFixed(2)}
-                </Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={[styles.summaryLabel, { color: colors.mutedText }]}>
-                  بهترین زنجیره برد
-                </Text>
-                <Text style={[styles.summaryValue, { color: GREEN }]}>
-                  {stats.maxWinStreak}
-                </Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={[styles.summaryLabel, { color: colors.mutedText }]}>
-                  بدترین زنجیره باخت
-                </Text>
-                <Text style={[styles.summaryValue, { color: RED }]}>
-                  {stats.maxLossStreak}
-                </Text>
-              </View>
-            </View>
           </>
         )}
 
@@ -818,7 +1359,7 @@ export default function BacktestScreen() {
             <Text style={[styles.logTitle, { color: colors.text }]}>
               معاملات ({trades.length})
             </Text>
-            {trades.slice(0, 15).map((t) => {
+            {trades.slice(0, 20).map((t) => {
               const isWin = t.outcome === 'win';
               const isLoss = t.outcome === 'loss';
               const isOpen = t.outcome === 'open';
@@ -832,9 +1373,7 @@ export default function BacktestScreen() {
                       styles.logIcon,
                       {
                         backgroundColor:
-                          t.direction === 'buy'
-                            ? `${GREEN}22`
-                            : `${RED}22`,
+                          t.direction === 'buy' ? `${GREEN}22` : `${RED}22`,
                       },
                     ]}
                   >
@@ -847,12 +1386,12 @@ export default function BacktestScreen() {
 
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.logPair, { color: colors.text }]}>
-                      {t.direction === 'buy' ? 'BUY' : 'SELL'} @ {t.entryPrice.toFixed(2)}
+                      {t.direction === 'buy' ? 'BUY' : 'SELL'} @{' '}
+                      {t.entryPrice.toFixed(t.entryPrice > 100 ? 2 : 4)}
                     </Text>
                     <Text style={[styles.logMeta, { color: colors.mutedText }]}>
                       {t.breakEvenTriggered ? '🎯 BE ' : ''}
-                      {t.stages.filter((s) => s.hit).length}/
-                      {t.stages.length} TP
+                      {t.stages.filter((s) => s.hit).length}/{t.stages.length} TP
                     </Text>
                   </View>
 
@@ -871,9 +1410,7 @@ export default function BacktestScreen() {
                     <Text
                       style={[
                         styles.logOutcomeText,
-                        {
-                          color: isWin ? GREEN : isLoss ? RED : AMBER,
-                        },
+                        { color: isWin ? GREEN : isLoss ? RED : AMBER },
                       ]}
                     >
                       {isWin ? 'WIN' : isLoss ? 'LOSS' : 'OPEN'}
@@ -899,7 +1436,218 @@ export default function BacktestScreen() {
         <View style={{ height: 100 }} />
       </ScrollView>
 
+      {/* ============================================ */}
+      {/* ORDER MODAL */}
+      {/* ============================================ */}
+      <Modal
+        visible={showOrder}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowOrder(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View
+            style={[
+              styles.sheetModal,
+              { backgroundColor: isDark ? '#0F172A' : '#FFFFFF' },
+            ]}
+          >
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>
+                {orderDirection === 'buy' ? 'خرید' : 'فروش'}
+              </Text>
+              <TouchableOpacity onPress={() => setShowOrder(false)}>
+                <Ionicons name="close" size={24} color={colors.mutedText} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {/* ORDER TYPE */}
+              <Text style={[styles.fieldLabel, { color: colors.mutedText }]}>
+                نوع سفارش
+              </Text>
+              <View style={styles.typeSelector}>
+                {(['market', 'limit', 'stop'] as const).map((t) => {
+                  const active = orderType === t;
+                  const labels = { market: 'Market', limit: 'Limit', stop: 'Stop' };
+                  return (
+                    <TouchableOpacity
+                      key={t}
+                      onPress={() => setOrderType(t)}
+                      style={[
+                        styles.typeBtn,
+                        {
+                          backgroundColor: active ? BLUE : colors.input,
+                          borderColor: active ? BLUE : colors.border,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.typeBtnText,
+                          { color: active ? '#FFF' : colors.mutedText },
+                        ]}
+                      >
+                        {labels[t]}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* ENTRY */}
+              <Text style={[styles.fieldLabel, { color: colors.mutedText }]}>
+                قیمت ورود
+              </Text>
+              <TextInput
+                value={customEntry}
+                onChangeText={setCustomEntry}
+                keyboardType="decimal-pad"
+                editable={orderType !== 'market'}
+                style={[
+                  styles.input,
+                  {
+                    backgroundColor: colors.input,
+                    borderColor: colors.border,
+                    color: colors.text,
+                    opacity: orderType === 'market' ? 0.6 : 1,
+                  },
+                ]}
+              />
+
+              {/* AUTO SL */}
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.toggleLabel, { color: colors.text }]}>
+                    SL خودکار (ATR)
+                  </Text>
+                </View>
+                <Switch
+                  value={autoSL}
+                  onValueChange={setAutoSL}
+                  trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                  thumbColor={autoSL ? BLUE : '#FFFFFF'}
+                />
+              </View>
+
+              {!autoSL && (
+                <>
+                  <Text style={[styles.fieldLabel, { color: colors.mutedText }]}>
+                    Stop Loss
+                  </Text>
+                  <TextInput
+                    value={customSL}
+                    onChangeText={setCustomSL}
+                    keyboardType="decimal-pad"
+                    placeholder="مثلاً 3650.00"
+                    placeholderTextColor={colors.mutedText}
+                    style={[
+                      styles.input,
+                      {
+                        backgroundColor: colors.input,
+                        borderColor: colors.border,
+                        color: colors.text,
+                      },
+                    ]}
+                  />
+                </>
+              )}
+
+              {/* AUTO TP */}
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.toggleLabel, { color: colors.text }]}>
+                    TP خودکار (R:R)
+                  </Text>
+                </View>
+                <Switch
+                  value={autoTP}
+                  onValueChange={setAutoTP}
+                  trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                  thumbColor={autoTP ? BLUE : '#FFFFFF'}
+                />
+              </View>
+
+              {!autoTP && (
+                <>
+                  <Text style={[styles.fieldLabel, { color: colors.mutedText }]}>
+                    Take Profit
+                  </Text>
+                  <TextInput
+                    value={customTP}
+                    onChangeText={setCustomTP}
+                    keyboardType="decimal-pad"
+                    placeholder="مثلاً 3670.00"
+                    placeholderTextColor={colors.mutedText}
+                    style={[
+                      styles.input,
+                      {
+                        backgroundColor: colors.input,
+                        borderColor: colors.border,
+                        color: colors.text,
+                      },
+                    ]}
+                  />
+                </>
+              )}
+
+              {/* PREVIEW */}
+              <View
+                style={[
+                  styles.previewBox,
+                  { backgroundColor: colors.input, borderColor: colors.border },
+                ]}
+              >
+                <Text style={[styles.previewTitle, { color: colors.mutedText }]}>
+                  پیش‌نمایش
+                </Text>
+                <View style={styles.previewRow}>
+                  <Text style={[styles.previewLabel, { color: colors.mutedText }]}>
+                    ریسک:
+                  </Text>
+                  <Text style={[styles.previewValue, { color: RED }]}>
+                    ${(settings.capital * settings.riskPerTrade / 100).toFixed(2)}
+                  </Text>
+                </View>
+                <View style={styles.previewRow}>
+                  <Text style={[styles.previewLabel, { color: colors.mutedText }]}>
+                    حجم:
+                  </Text>
+                  <Text style={[styles.previewValue, { color: colors.text }]}>
+                    {(settings.capital * settings.riskPerTrade / 100 / 10).toFixed(3)} lots
+                  </Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                onPress={submitOrder}
+                style={[
+                  styles.submitBtn,
+                  {
+                    backgroundColor:
+                      orderDirection === 'buy' ? GREEN : RED,
+                  },
+                ]}
+              >
+                <Ionicons
+                  name={orderDirection === 'buy' ? 'arrow-up' : 'arrow-down'}
+                  size={20}
+                  color="#FFF"
+                />
+                <Text style={styles.submitBtnText}>
+                  ثبت {orderDirection === 'buy' ? 'خرید' : 'فروش'}
+                </Text>
+              </TouchableOpacity>
+
+              <View style={{ height: 30 }} />
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ============================================ */}
       {/* SETTINGS MODAL */}
+      {/* ============================================ */}
       <Modal
         visible={showSettings}
         animationType="slide"
@@ -909,7 +1657,7 @@ export default function BacktestScreen() {
         <View style={styles.modalOverlay}>
           <View
             style={[
-              styles.settingsModal,
+              styles.sheetModal,
               { backgroundColor: isDark ? '#0F172A' : '#FFFFFF' },
             ]}
           >
@@ -923,7 +1671,19 @@ export default function BacktestScreen() {
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false}>
-              {/* CAPITAL */}
+              <TouchableOpacity
+                onPress={loadSession}
+                style={[
+                  styles.loadBtn,
+                  { backgroundColor: colors.input, borderColor: colors.border },
+                ]}
+              >
+                <Ionicons name="folder-open-outline" size={18} color={colors.text} />
+                <Text style={[styles.loadBtnText, { color: colors.text }]}>
+                  بارگذاری جلسه ذخیره‌شده
+                </Text>
+              </TouchableOpacity>
+
               <Text style={[styles.fieldLabel, { color: colors.mutedText }]}>
                 سرمایه اولیه ($)
               </Text>
@@ -943,7 +1703,6 @@ export default function BacktestScreen() {
                 ]}
               />
 
-              {/* RISK */}
               <Text style={[styles.fieldLabel, { color: colors.mutedText }]}>
                 ریسک هر معامله (%)
               </Text>
@@ -966,7 +1725,6 @@ export default function BacktestScreen() {
                 ]}
               />
 
-              {/* ATR */}
               <Text style={[styles.fieldLabel, { color: colors.mutedText }]}>
                 ATR × (برای حد ضرر)
               </Text>
@@ -989,7 +1747,6 @@ export default function BacktestScreen() {
                 ]}
               />
 
-              {/* RR */}
               <Text style={[styles.fieldLabel, { color: colors.mutedText }]}>
                 R:R (هدف نهایی)
               </Text>
@@ -1012,14 +1769,13 @@ export default function BacktestScreen() {
                 ]}
               />
 
-              {/* MULTI TP */}
               <View style={styles.toggleRow}>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.toggleLabel, { color: colors.text }]}>
                     Multi-Stage Take Profit
                   </Text>
                   <Text style={[styles.toggleSub, { color: colors.mutedText }]}>
-                    بستن تدریجی پوزیشن در ۳ مرحله (1R, 2R, RR)
+                    ۳ مرحله: 1R، 2R، RR
                   </Text>
                 </View>
                 <Switch
@@ -1032,14 +1788,13 @@ export default function BacktestScreen() {
                 />
               </View>
 
-              {/* BREAKEVEN */}
               <View style={styles.toggleRow}>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.toggleLabel, { color: colors.text }]}>
                     Breakeven Stop
                   </Text>
                   <Text style={[styles.toggleSub, { color: colors.mutedText }]}>
-                    انتقال SL به نقطه ورود در سود مشخص
+                    انتقال SL به نقطه ورود
                   </Text>
                 </View>
                 <Switch
@@ -1078,14 +1833,13 @@ export default function BacktestScreen() {
                 </>
               )}
 
-              {/* TRAILING */}
               <View style={styles.toggleRow}>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.toggleLabel, { color: colors.text }]}>
                     Trailing Stop
                   </Text>
                   <Text style={[styles.toggleSub, { color: colors.mutedText }]}>
-                    حد ضرر متحرک با حرکت قیمت
+                    حد ضرر متحرک
                   </Text>
                 </View>
                 <Switch
@@ -1138,7 +1892,9 @@ export default function BacktestScreen() {
         </View>
       </Modal>
 
-      {/* EQUITY CURVE MODAL */}
+      {/* ============================================ */}
+      {/* EQUITY MODAL */}
+      {/* ============================================ */}
       <Modal
         visible={showEquity}
         animationType="slide"
@@ -1189,10 +1945,7 @@ export default function BacktestScreen() {
                 <Text
                   style={[
                     styles.equityValue,
-                    {
-                      color:
-                        stats.totalPnL >= 0 ? GREEN : RED,
-                    },
+                    { color: stats.totalPnL >= 0 ? GREEN : RED },
                   ]}
                 >
                   ${(settings.capital + stats.totalPnL).toFixed(2)}
@@ -1205,14 +1958,108 @@ export default function BacktestScreen() {
                 <Text
                   style={[
                     styles.equityValue,
-                    {
-                      color: stats.totalPnL >= 0 ? GREEN : RED,
-                    },
+                    { color: stats.totalPnL >= 0 ? GREEN : RED },
                   ]}
                 >
                   {((stats.totalPnL / settings.capital) * 100).toFixed(2)}%
                 </Text>
               </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ============================================ */}
+      {/* SYMBOL PICKER */}
+      {/* ============================================ */}
+      <Modal
+        visible={showSymbolPicker}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowSymbolPicker(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View
+            style={[
+              styles.sheetModal,
+              { backgroundColor: isDark ? '#0F172A' : '#FFFFFF' },
+            ]}
+          >
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>
+                انتخاب نماد
+              </Text>
+              <TouchableOpacity onPress={() => setShowSymbolPicker(false)}>
+                <Ionicons name="close" size={24} color={colors.mutedText} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={[styles.fieldLabel, { color: colors.mutedText }]}>
+              نماد
+            </Text>
+            <View style={styles.chipsWrap}>
+              {SYMBOLS.map((s) => {
+                const active = s.id === symbol;
+                return (
+                  <TouchableOpacity
+                    key={s.id}
+                    onPress={() => {
+                      setSymbol(s.id);
+                      setShowSymbolPicker(false);
+                    }}
+                    style={[
+                      styles.chip,
+                      {
+                        backgroundColor: active ? BLUE : colors.input,
+                        borderColor: active ? BLUE : colors.border,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.chipText,
+                        { color: active ? '#FFF' : colors.text },
+                      ]}
+                    >
+                      {s.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <Text style={[styles.fieldLabel, { color: colors.mutedText }]}>
+              تایم‌فریم
+            </Text>
+            <View style={styles.chipsWrap}>
+              {TIMEFRAMES.map((tf) => {
+                const active = tf.id === timeframe;
+                return (
+                  <TouchableOpacity
+                    key={tf.id}
+                    onPress={() => {
+                      setTimeframe(tf.id);
+                      setShowSymbolPicker(false);
+                    }}
+                    style={[
+                      styles.chip,
+                      {
+                        backgroundColor: active ? BLUE : colors.input,
+                        borderColor: active ? BLUE : colors.border,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.chipText,
+                        { color: active ? '#FFF' : colors.text },
+                      ]}
+                    >
+                      {tf.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           </View>
         </View>
@@ -1257,228 +2104,163 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 18,
+    paddingHorizontal: 12,
     paddingTop: Platform.OS === 'ios' ? 56 : 50,
-    paddingBottom: 14,
+    paddingBottom: 12,
     borderBottomWidth: 1,
-    gap: 10,
+    gap: 8,
   },
   iconBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
+    width: 40,
+    height: 40,
+    borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
   },
-  title: { fontSize: 17, fontWeight: '900' },
+  title: { fontSize: 16, fontWeight: '900' },
   subtitle: { fontSize: 10, fontWeight: '700', marginTop: 2 },
 
-  content: { padding: 18, paddingBottom: 30 },
-  center: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 40,
-    gap: 10,
-  },
+  content: { padding: 14, paddingBottom: 30 },
+  center: { alignItems: 'center', justifyContent: 'center', paddingVertical: 40, gap: 10 },
   loadText: { fontSize: 12, fontWeight: '600' },
 
-  pillsRow: { gap: 8, paddingBottom: 10 },
-  pill: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  pillText: { fontSize: 12, fontWeight: '800' },
-
   chartWrap: {
-    borderRadius: 18,
+    borderRadius: 16,
     borderWidth: 1,
     overflow: 'hidden',
     marginBottom: 12,
-    height: 300,
+    height: 320,
   },
   webview: { flex: 1, backgroundColor: 'transparent' },
 
-  progressWrap: { marginBottom: 12 },
-  progressTrack: { height: 6, borderRadius: 3, overflow: 'hidden' },
-  progressFill: { height: '100%', borderRadius: 3 },
-  progressText: {
-    fontSize: 10,
-    fontWeight: '700',
-    marginTop: 6,
-    textAlign: 'right',
-  },
+  sliderWrap: { marginBottom: 12 },
+  sliderHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
+  sliderLabel: { fontSize: 10, fontWeight: '700' },
+  sliderTrack: { height: 30, borderRadius: 8, overflow: 'hidden', justifyContent: 'center' },
+  sliderFill: { position: 'absolute', left: 0, top: 0, bottom: 0, opacity: 0.2 },
+  sliderBtns: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, gap: 4 },
+  sliderBtn: { paddingHorizontal: 8, paddingVertical: 4 },
+  sliderBtnText: { fontSize: 10, fontWeight: '900' },
 
-  liveStatsBar: {
+  liveBar: {
     flexDirection: 'row',
     borderRadius: 14,
     borderWidth: 1,
-    padding: 10,
+    padding: 12,
     marginBottom: 12,
     alignItems: 'center',
-    position: 'relative',
   },
-  liveStatItem: { flex: 1, alignItems: 'center' },
-  liveStatLabel: { fontSize: 9, fontWeight: '700', marginBottom: 3 },
-  liveStatValue: { fontSize: 12, fontWeight: '900' },
-  liveStatDivider: { width: 1, height: 26, backgroundColor: '#00000015' },
-  beBadge: {
-    position: 'absolute',
-    top: -8,
-    right: 10,
-    backgroundColor: AMBER,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
+  liveCol: { flex: 1, alignItems: 'center' },
+  liveLabel: { fontSize: 9, fontWeight: '700', marginBottom: 3 },
+  liveValue: { fontSize: 14, fontWeight: '900' },
+  liveDivider: { width: 1, height: 26, backgroundColor: '#00000015' },
+  closeTradeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
   },
-  beBadgeText: { color: '#FFF', fontSize: 9, fontWeight: '900' },
+  closeTradeBtnText: { fontSize: 11, fontWeight: '900', color: RED },
 
-  controlsRow: {
+  controlsBar: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 10,
-    marginBottom: 12,
+    gap: 8,
+    marginBottom: 10,
   },
-  controlBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
+  smBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
   },
   playBtn: {
-    width: 64,
-    height: 64,
-    borderRadius: 22,
+    width: 60,
+    height: 60,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
 
-  tradeRow: { flexDirection: 'row', gap: 12, marginBottom: 16 },
+  speedRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 },
+  speedLabel: { fontSize: 11, fontWeight: '800' },
+  speedBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  speedBtnText: { fontSize: 10, fontWeight: '900' },
+
+  tradeRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
   tradeBtn: {
     flex: 1,
-    height: 58,
-    borderRadius: 18,
+    height: 56,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
     gap: 8,
   },
-  tradeBtnText: { color: '#FFF', fontSize: 15, fontWeight: '900' },
+  tradeBtnText: { color: '#FFF', fontSize: 14, fontWeight: '900' },
 
-  sectionTitleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
+  sectionTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
   sectionTitle: { fontSize: 15, fontWeight: '900' },
   sectionLink: { fontSize: 12, fontWeight: '800' },
 
-  statsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 12,
-  },
-  statCard: {
-    width: '48.5%',
-    borderRadius: 14,
-    borderWidth: 1,
-    padding: 12,
-    alignItems: 'flex-end',
-  },
-  statLabel: { fontSize: 10, fontWeight: '700' },
-  statValue: { fontSize: 16, fontWeight: '900', marginTop: 4 },
+  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
+  statCard: { width: '48.5%', borderRadius: 12, borderWidth: 1, padding: 10, alignItems: 'flex-end' },
+  statLabel: { fontSize: 9, fontWeight: '700' },
+  statValue: { fontSize: 15, fontWeight: '900', marginTop: 3 },
 
-  summaryCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    padding: 14,
-    marginBottom: 14,
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 6,
-  },
-  summaryLabel: { fontSize: 11, fontWeight: '700' },
-  summaryValue: { fontSize: 13, fontWeight: '900' },
-
-  logCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    padding: 14,
-    marginBottom: 14,
-  },
-  logTitle: { fontSize: 14, fontWeight: '900', marginBottom: 10 },
-  logRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 9,
-    borderBottomWidth: 1,
-  },
-  logIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  logPair: { fontSize: 12, fontWeight: '900' },
+  logCard: { borderRadius: 14, borderWidth: 1, padding: 12, marginBottom: 14 },
+  logTitle: { fontSize: 13, fontWeight: '900', marginBottom: 8 },
+  logRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, borderBottomWidth: 1 },
+  logIcon: { width: 26, height: 26, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  logPair: { fontSize: 11, fontWeight: '900' },
   logMeta: { fontSize: 9, fontWeight: '600', marginTop: 2 },
-  logOutcome: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  logOutcomeText: { fontSize: 9, fontWeight: '900' },
-  logResult: {
-    fontSize: 12,
-    fontWeight: '900',
-    width: 65,
-    textAlign: 'left',
-  },
+  logOutcome: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
+  logOutcomeText: { fontSize: 8, fontWeight: '900' },
+  logResult: { fontSize: 11, fontWeight: '900', width: 58, textAlign: 'left' },
 
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  settingsModal: {
-    maxHeight: '92%',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  sheetModal: {
+    maxHeight: '90%',
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
     paddingHorizontal: 18,
     paddingTop: 18,
   },
   equityModal: {
     maxHeight: '70%',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
     paddingHorizontal: 18,
     paddingTop: 18,
   },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 14,
-  },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
   modalTitle: { fontSize: 18, fontWeight: '900' },
 
-  fieldLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    marginTop: 10,
-    marginBottom: 6,
-    textAlign: 'right',
+  loadBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 16,
   },
+  loadBtnText: { fontSize: 13, fontWeight: '800' },
+
+  fieldLabel: { fontSize: 11, fontWeight: '800', marginTop: 10, marginBottom: 6, textAlign: 'right' },
   input: {
     height: 46,
     borderWidth: 1,
@@ -1489,20 +2271,46 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
 
+  typeSelector: { flexDirection: 'row', gap: 6, marginBottom: 6 },
+  typeBtn: {
+    flex: 1,
+    height: 40,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  typeBtnText: { fontSize: 12, fontWeight: '900' },
+
   toggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
+    paddingVertical: 10,
     gap: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#00000010',
   },
   toggleLabel: { fontSize: 13, fontWeight: '900', textAlign: 'right' },
   toggleSub: { fontSize: 10, fontWeight: '600', marginTop: 2, textAlign: 'right' },
 
-  saveBtn: {
-    marginTop: 20,
+  previewBox: { borderRadius: 12, borderWidth: 1, padding: 12, marginTop: 14 },
+  previewTitle: { fontSize: 11, fontWeight: '800', marginBottom: 8, textAlign: 'right' },
+  previewRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
+  previewLabel: { fontSize: 11, fontWeight: '700' },
+  previewValue: { fontSize: 12, fontWeight: '900' },
+
+  submitBtn: {
+    marginTop: 16,
     height: 52,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  submitBtnText: { color: '#FFF', fontSize: 14, fontWeight: '900' },
+
+  saveBtn: {
+    marginTop: 18,
+    height: 50,
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1511,19 +2319,13 @@ const styles = StyleSheet.create({
   },
   saveBtnText: { color: '#FFF', fontSize: 14, fontWeight: '900' },
 
-  equityChartWrap: {
-    borderRadius: 16,
-    borderWidth: 1,
-    overflow: 'hidden',
-    height: 260,
-    marginBottom: 14,
-  },
+  equityChartWrap: { borderRadius: 14, borderWidth: 1, overflow: 'hidden', height: 240, marginBottom: 14 },
   equityInfo: { flexDirection: 'row', gap: 10 },
-  equityItem: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 10,
-  },
+  equityItem: { flex: 1, alignItems: 'center', paddingVertical: 10 },
   equityLabel: { fontSize: 10, fontWeight: '700' },
-  equityValue: { fontSize: 18, fontWeight: '900', marginTop: 4 },
+  equityValue: { fontSize: 17, fontWeight: '900', marginTop: 4 },
+
+  chipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 6 },
+  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1 },
+  chipText: { fontSize: 12, fontWeight: '800' },
 });
